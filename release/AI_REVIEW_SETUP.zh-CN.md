@@ -92,6 +92,7 @@ GitHub 分支规则仍然生效。如果要求独立账号审批，内部 bot �
 | 429、限流 | 自动有限退避／备用；检查账号配额与其他项目调用，必要时降低 REVIEW_RPM，然后手动重审当前 SHA |
 | 401／403、欠费 | 更新对应 Actions Secret，检查供应商权限和余额；不把密钥贴到日志里 |
 | 404、模型不存在 | 核对 BASE_URL、兼容协议、MODEL ID 与模型访问权限 |
+| HTTP 200 非 JSON | HTML通常意味着填了网站／控制台入口或网关返回拦截页；核对供应商的 API 基地址。事件流说明接口没有返回所要求的非流式 Chat Completions JSON。测试只报告响应类型，不公开响应正文或密钥 |
 | 审核 request_changes | 阅读 findings，让开发 Agent 修复，再对新提交构建、审核；不换模型绕过拒绝 |
 | uncertain、差异过大 | 保持未合并；交给开发 Agent 完整处理或拆分，不截断材料后当作通过 |
 | 同步冲突、draft | 查看候选 PR 的 release/upstream-report.md；修复后重新构建、标记 ready |

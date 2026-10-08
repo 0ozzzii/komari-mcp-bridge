@@ -91,18 +91,30 @@ def call_provider(base_url, key, model, payload, sha, timeout=90):
         raise ProviderFailure("Provider needs HTTPS base URL, API key and model ID")
     url = base_url.rstrip("/") + "/chat/completions"
     body = {"model": model, "messages": [{"role": "system", "content": SYSTEM},
-             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}], "max_tokens": 4096}
+             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+            "max_tokens": 4096, "stream": False}
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, request, fp, code, message, headers, new_url):
             return None
     request = urllib.request.Request(url, data=json.dumps(body).encode(),
-                                    headers={"Content-Type": "application/json", "Authorization": "Bearer " + key}, method="POST")
+                                    headers={"Content-Type": "application/json", "Accept": "application/json",
+                                             "Authorization": "Bearer " + key}, method="POST")
     try:
         with urllib.request.build_opener(NoRedirect).open(request, timeout=timeout) as response:
             raw = response.read(262145)
             if len(raw) > 262144:
                 raise ProviderFailure("Provider response exceeds limit")
-        result = json.loads(raw)
+            status = response.status
+            compressed = response.headers.get("Content-Encoding", "").lower() not in ("", "identity")
+        try:
+            result = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            prefix = raw.lstrip()[:80].lower()
+            kind = ("compressed body" if compressed else "empty body" if not raw else
+                    "HTML page" if prefix.startswith((b"<!doctype html", b"<html")) else
+                    "event stream" if prefix.startswith((b"data:", b"event:")) else "invalid JSON")
+            # Do not expose response text, headers, URLs or credentials.
+            raise ProviderFailure("HTTP " + str(status) + " response is not JSON (" + kind + ")") from error
         if result["choices"][0].get("finish_reason") == "length":
             raise ProviderFailure("Provider truncated the review")
         content = result["choices"][0]["message"]["content"]

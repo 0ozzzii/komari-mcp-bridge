@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 
 class SmokeTests(unittest.TestCase):
@@ -56,6 +57,29 @@ class SmokeTests(unittest.TestCase):
         report = self.invoke(lambda *args: dict(self.valid(), reviewed_sha="2" * 40))
         self.assertFalse(report["passed"])
         self.assertTrue(all(not r["passed"] for r in report["providers"]))
+
+    def test_non_json_diagnostics_never_disclose_body_and_request_disables_streaming(self):
+        class Response:
+            status = 200
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def read(self, limit): return self.body
+        response = Response()
+        class Opener:
+            def open(inner, request, timeout):
+                self.assertEqual(request.get_header("Accept"), "application/json")
+                self.assertFalse(json.loads(request.data)["stream"])
+                return response
+        for body, description in ((b'<html>PRIVATE_RESPONSE</html>', 'HTML page'),
+                                  (b'data: PRIVATE_RESPONSE', 'event stream'),
+                                  (b'', 'empty body'), (b'PRIVATE_RESPONSE', 'invalid JSON')):
+            response.body = body
+            with self.subTest(description=description), patch.object(self.smoke.reviewer.urllib.request, 'build_opener', return_value=Opener()):
+                with self.assertRaises(self.smoke.reviewer.ProviderFailure) as raised:
+                    self.smoke.reviewer.call_provider('https://example.com/v1', 'private-key', 'model', {}, self.sha)
+                self.assertIn(description, str(raised.exception))
+                self.assertNotIn('PRIVATE_RESPONSE', str(raised.exception))
 
 
 if __name__ == "__main__":
