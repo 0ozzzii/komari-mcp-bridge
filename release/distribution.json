@@ -1,6 +1,6 @@
 {
   "source_repository": "0ozzzii/komari-mcp-bridge-dev",
-  "source_commit": "4b31e9d324e9afd89e79dc2fc0443e3b72043197",
+  "source_commit": "71224e729416c1878a01b65729f870fdb5a63a43",
   "distribution_repository": "0ozzzii/komari-mcp-bridge",
   "export_mode": "sanitized immutable source snapshot; private history excluded",
   "excluded_paths": [
@@ -9,6 +9,7 @@
     ".github/workflows/build.yml",
     ".github/workflows/release.yml",
     ".github/workflows/reviewer-smoke-test.yml",
+    ".github/workflows/sync-public-distribution.yml",
     ".github/workflows/sync-upstream.yml",
     ".github/workflows/upstream-failure.yml"
   ],
