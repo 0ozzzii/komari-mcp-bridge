@@ -11,7 +11,7 @@ import subprocess
 
 
 def api(repository, path, method="GET", body=None):
-    args = ["gh", "api", "repos/" + repository + "/" + path, "--method", method]
+    args = ["gh", "api", "repos/" + repository + ("/" + path if path else ""), "--method", method]
     if body is not None:
         args += ["--input", "-"]
     result = subprocess.run(args, input=json.dumps(body).encode() if body is not None else None,

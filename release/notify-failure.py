@@ -8,7 +8,7 @@ import subprocess
 
 
 def api(repository, path, method="GET", body=None):
-    command = ["gh", "api", "repos/" + repository + "/" + path, "--method", method]
+    command = ["gh", "api", "repos/" + repository + ("/" + path if path else ""), "--method", method]
     if body is not None:
         command += ["--input", "-"]
     result = subprocess.run(command, input=json.dumps(body).encode() if body is not None else None,

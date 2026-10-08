@@ -180,7 +180,7 @@ def review_with_fallback(payload, sha, providers, call=call_provider,
 
 
 def gh(repository, path, diff=False):
-    args = ["gh", "api", "repos/" + repository + "/" + path]
+    args = ["gh", "api", "repos/" + repository + ("/" + path if path else "")]
     if diff:
         args += ["-H", "Accept: application/vnd.github.diff"]
     output = subprocess.check_output(args)
