@@ -1,6 +1,6 @@
 {
   "source_repository": "0ozzzii/komari-mcp-bridge-dev",
-  "source_commit": "7ee98b4ec223e32a235d75f8151d4f9b97cf1d4a",
+  "source_commit": "25cbb4601ee5706a930884b83067983909f83ead",
   "distribution_repository": "0ozzzii/komari-mcp-bridge",
   "export_mode": "sanitized immutable source snapshot; private history excluded",
   "excluded_paths": [
@@ -8,6 +8,7 @@
     ".github/workflows/ai-review.yml",
     ".github/workflows/build.yml",
     ".github/workflows/release.yml",
+    ".github/workflows/reviewer-smoke-test.yml",
     ".github/workflows/sync-upstream.yml",
     ".github/workflows/upstream-failure.yml"
   ],
@@ -377,7 +378,7 @@
     "protocol/v2/jsonrpc.go": "1e66fdf9bc5a084f4c800639ab5f12389ae81e9378a58c72909d7f4c349d6e0c",
     "protocol/v2/networktest.go": "2fcd38f2af5672b2b0ff5cf8c800bf519764cd506bb9b2373206c8d599daa1a2",
     "protocol/v2/networktest_test.go": "986e14f78604431a4c7ea6ab6dca94fc3ac1a1c13028578caaedb67777889053",
-    "release/AI_REVIEW_SETUP.zh-CN.md": "32345489a54fff5a073ac3b59a9cf80876854b647690db8e87b78fc774e7af48",
+    "release/AI_REVIEW_SETUP.zh-CN.md": "512cc7e2898d19daf5b312e78e9fd73c8ab8b52fcad965825ee05cd6699979ab",
     "release/PUBLIC_DISTRIBUTION.md": "e396160ec67f58305a497b2f29b0adbab3b9ca4a9ecdbe69473b630c4fc5b814",
     "release/PUBLIC_SYNC.zh-CN.md": "d6209c5a4d2db57c631f514bdd5bfc5d63440ffc3b44fdea36fdbab78a86b34c",
     "release/README.md": "ec6787ffef81e4ddf621db3bf73782caade8c770c96b5d56159e2643d39bce66",
@@ -400,10 +401,12 @@
     "release/render-installers.py": "ec5ed0078e063186b38a34d97a6f2e474586e3df24d8912499c9b8b50f43ad5c",
     "release/review-gate.py": "5587fb1131e474b68193a301cf925d823ca3ffe9dc2fabcbc23d03d61c97a5c0",
     "release/review-notification.py": "220ab7f8072e53e933363009946228d054a96554bf98be6e75bbbc2c7d84df6a",
+    "release/reviewer-smoke-test.py": "5eff97475f76f9a36ecedce6d48376fff723d582509beba10be9f4832d8953bb",
     "release/sync-upstream.py": "e8df90bb58b4afbd4ac89047bfe6f7c99442807c6b6a39f912a10e345729c952",
     "release/tests/test_public_distribution.py": "a3223a1efefd9e967f951055668ebd01fc528dea1320c1e3d84f9467d7201453",
     "release/tests/test_public_export.py": "98f9b61f37789012d9754258ca3a789eea6b8845c4a3bf46fec75ea019ecadea",
     "release/tests/test_release.py": "e2a8551902f0b6b99d8f50adb39b421fb5aa5b4356354b74cad19850a635cb7b",
+    "release/tests/test_reviewer_smoke.py": "71dbd3bc38e1c4fe7944d6b1c0634a1de8350d558e0c0565955347257fd640c5",
     "release/upgrade-prompt.zh-CN.md": "56ad21d42099661c0b8bb900d8d4b19d9b57b1fd366d7f365102a5429d21822d",
     "release/windows-deployment-guide.md": "f786a955e2c76e0fa72fc4f834c38138be8b7b327941742e0c81a1ee50c899aa",
     "release/windows-terminal-probe-prompt.txt": "38d11e448303d6a2c52541314824c1b93a7d9a4a9e109e845d9fcf4cf06f3b81",
