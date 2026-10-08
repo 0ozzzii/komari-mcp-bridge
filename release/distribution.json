@@ -1,7 +1,7 @@
 {
-  "source_repository": "0ozzzii/komari-mcp-bridge",
+  "source_repository": "0ozzzii/komari-mcp-bridge-dev",
   "source_commit": "96c8cf06d90e8ea69c1810e49aadea8d515c983e",
-  "distribution_repository": "0ozzzii/komari-mcp-bridge-release",
+  "distribution_repository": "0ozzzii/komari-mcp-bridge",
   "export_mode": "sanitized current source snapshot; private history excluded",
   "excluded_paths": [
     ".github/workflows/agent-review-merge.yml",
@@ -555,5 +555,12 @@
     "web-patches/prepare.sh": "8872d9f5734fcf9a58653e4ddad71dde9894d15da45299e8f51969a757ea5165",
     "web-patches/validation.json": "26407b3fc796a18256ba9707b9ef60d47bfec0decc9685e4a64bbafd38b5f363"
   },
-  "note": "Development/review/release workflows run in the private development repository; no automatic mirror workflow is added."
+  "note": "Repository identities have been renamed. Source files remain byte-identical to source_commit. Prebuilt v1.0.2 assets retain their original release.json and checksums; its repository fields record names at build time. Private development workflows and history are not mirrored.",
+  "source_repository_id": 1405721273,
+  "distribution_repository_id": 1410496961,
+  "repository_names_at_build": {
+    "source": "0ozzzii/komari-mcp-bridge",
+    "distribution": "0ozzzii/komari-mcp-bridge-release"
+  },
+  "release_validation_run": "https://github.com/0ozzzii/komari-mcp-bridge-dev/actions/runs/37799553710"
 }
