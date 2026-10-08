@@ -1,0 +1,116 @@
+name: Prepare official upstream update PR
+on:
+  schedule:
+    # 12:00 UTC+8. GitHub scheduling may be delayed.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: official-upstream-sync
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+      - name: Detect existing sync PR without overwriting manual fixes
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          number=$(gh pr list --repo "$REPOSITORY" --state open --json number,headRefName --jq '.[] | select(.headRefName | startswith("upstream/official-sync-")) | .number' | head -n 1)
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          if [ -n "$number" ]; then echo "Existing sync PR #$number retained; no changes overwritten." >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Preserve trusted notification scripts before preparing untrusted candidate data
+        run: |
+          cp release/notify-review.py "$RUNNER_TEMP/notify-review.py"
+          cp release/notify-failure.py "$RUNNER_TEMP/notify-failure.py"
+      - name: Resolve exact upstream main commits
+        if: steps.existing.outputs.number == ''
+        run: |
+          python3 - <<'PY'
+          import json,subprocess
+          c=json.load(open('release/config.json'))
+          targets={}
+          for component,item in c['upstream'].items():
+              line=subprocess.check_output(['git','ls-remote','https://github.com/'+item['repository']+'.git','refs/heads/main'],text=True).strip()
+              targets[component]=line.split()[0]
+          open('/tmp/komari-upstream-targets.json','w').write(json.dumps(targets))
+          PY
+      - name: Prepare transactional three-way candidate
+        if: steps.existing.outputs.number == ''
+        id: candidate
+        run: |
+          set -euo pipefail
+          state=$(python3 release/sync-upstream.py --targets /tmp/komari-upstream-targets.json | tail -n 1)
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+      - name: Create a candidate PR, never auto-merge or release
+        id: pr
+        if: steps.candidate.outputs.state == 'ready' || steps.candidate.outputs.state == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          BASE: ${{ github.event.repository.default_branch }}
+          STATE: ${{ steps.candidate.outputs.state }}
+        run: |
+          set -euo pipefail
+          fingerprint=$(sha256sum /tmp/komari-upstream-targets.json | cut -c1-12)
+          branch="upstream/official-sync-${fingerprint}-$(date -u +%Y%m%d%H%M%S)"
+          git checkout -b "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Prepare official panel, agent and frontend update'
+          git push origin "$branch"
+          args=()
+          if [ "$STATE" = conflict ]; then args+=(--draft); fi
+          pr_url=$(gh pr create --repo "$REPOSITORY" --base "$BASE" --head "$branch" --title "Sync official upstream ($STATE)" --body-file release/upstream-report.md "${args[@]}")
+          echo "url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          # PRs created with GITHUB_TOKEN do not trigger normal PR CI. Dispatch
+          # the read-only build explicitly, using the same candidate branch.
+          gh workflow run build.yml --repo "$REPOSITORY" --ref "$branch"
+      - name: Notify the configured review Agent
+        if: steps.pr.outputs.url != ''
+        continue-on-error: true
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PR_URL: ${{ steps.pr.outputs.url }}
+          PR_HEAD_SHA: ${{ steps.pr.outputs.sha }}
+          CANDIDATE_STATE: ${{ steps.candidate.outputs.state }}
+          UPSTREAM_REVIEW_WEBHOOK_URL: ${{ vars.UPSTREAM_REVIEW_WEBHOOK_URL }}
+          UPSTREAM_REVIEW_WEBHOOK_TOKEN: ${{ secrets.UPSTREAM_REVIEW_WEBHOOK_TOKEN }}
+        run: python3 "$RUNNER_TEMP/notify-review.py"
+      - name: Notify conflict without treating draft as merge-ready
+        if: steps.candidate.outputs.state == 'conflict' && vars.UPSTREAM_NOTIFICATION_MODE != 'off'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 "$RUNNER_TEMP/notify-failure.py" --repository "$REPOSITORY" --kind sync --run-url "$RUN_URL" --reason '三方同步发生冲突，未提交部分代码更新；查看 draft PR 中的同步报告，需要开发 Agent 处理。'
+      - name: Mark a previous synchronization failure as recovered
+        if: (steps.candidate.outputs.state == 'ready' || steps.candidate.outputs.state == 'unchanged') && vars.UPSTREAM_NOTIFICATION_MODE != 'off'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 "$RUNNER_TEMP/notify-failure.py" --repository "$REPOSITORY" --kind sync --run-url "$RUN_URL" --resolved
+      - name: Keep evidence if repository settings disallow bot PR creation
+        if: failure() && steps.existing.outputs.number == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-sync-evidence
+          path: |
+            release/upstream-report.md
+            /tmp/komari-upstream-targets.json
+          if-no-files-found: warn

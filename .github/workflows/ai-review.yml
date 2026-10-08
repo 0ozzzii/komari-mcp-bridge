@@ -1,0 +1,108 @@
+name: Review upstream candidate with primary and backup models
+on:
+  workflow_run:
+    workflows: ['Build and validate']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      head_sha:
+        description: Exact upstream sync PR head commit to review
+        required: true
+        type: string
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+concurrency:
+  # One model review at a time across this repository, including manual runs.
+  group: ai-upstream-review
+  cancel-in-progress: false
+jobs:
+  review:
+    if: >-
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') &&
+      (vars.REVIEW_PRIMARY_MODEL != '' || vars.REVIEW_BACKUP_MODEL != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      decision: ${{ steps.review.outputs.decision }}
+    steps:
+      # PRs and official source contain untrusted data. Never checkout or run
+      # their code in the job receiving third-party API secrets.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Review exact commit with bounded context and failure-only failover
+        id: review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.head_sha }}
+          REVIEW_PRIMARY_BASE_URL: ${{ vars.REVIEW_PRIMARY_BASE_URL }}
+          REVIEW_PRIMARY_MODEL: ${{ vars.REVIEW_PRIMARY_MODEL }}
+          REVIEW_PRIMARY_API_KEY: ${{ secrets.REVIEW_PRIMARY_API_KEY }}
+          REVIEW_BACKUP_BASE_URL: ${{ vars.REVIEW_BACKUP_BASE_URL }}
+          REVIEW_BACKUP_MODEL: ${{ vars.REVIEW_BACKUP_MODEL }}
+          REVIEW_BACKUP_API_KEY: ${{ secrets.REVIEW_BACKUP_API_KEY }}
+          REVIEW_RPM: ${{ vars.REVIEW_RPM || '6' }}
+        run: python3 release/ai-review.py --repository "$REPOSITORY" --sha "$HEAD_SHA" --output "$RUNNER_TEMP/ai-review.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upstream-ai-review
+          path: ${{ runner.temp }}/ai-review.json
+          retention-days: 30
+          if-no-files-found: error
+  merge:
+    needs: review
+    if: needs.review.outputs.decision == 'approve' && vars.UPSTREAM_AI_AUTOMERGE == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      state: ${{ steps.merge.outputs.state }}
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: upstream-ai-review
+          path: ${{ runner.temp }}/review
+      - name: Recheck deterministic merge gates and atomically merge reviewed SHA
+        id: merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || inputs.head_sha }}
+        run: python3 release/merge-ai-review.py --repository "$REPOSITORY" --expected-sha "$HEAD_SHA" --review "$RUNNER_TEMP/review/ai-review.json"
+  notify:
+    needs: [review, merge]
+    if: >-
+      always() && vars.UPSTREAM_NOTIFICATION_MODE != 'off' &&
+      (needs.review.result == 'failure' || needs.review.result == 'cancelled' ||
+       needs.merge.result == 'failure' || needs.merge.result == 'cancelled' ||
+       needs.review.outputs.decision == 'uncertain' ||
+       needs.review.outputs.decision == 'approve' || needs.review.outputs.decision == 'request_changes')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Notify rejection, review errors and merge failures separately
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DECISION: ${{ needs.review.outputs.decision }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+          MERGE_RESULT: ${{ needs.merge.result }}
+          MERGE_STATE: ${{ needs.merge.outputs.state }}
+        run: python3 release/review-notification.py

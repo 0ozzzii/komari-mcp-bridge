@@ -1,0 +1,41 @@
+name: Notify upstream task failures through GitHub
+on:
+  workflow_run:
+    workflows: ['Build and validate', 'Prepare official upstream update PR']
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: upstream-failure-issue
+  cancel-in-progress: false
+jobs:
+  notify:
+    if: >-
+      vars.UPSTREAM_NOTIFICATION_MODE != 'off' &&
+      (startsWith(github.event.workflow_run.head_branch, 'upstream/official-sync-') ||
+       github.event.workflow_run.name == 'Prepare official upstream update PR')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Update one notification Issue per failure category
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_NAME: ${{ github.event.workflow_run.name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          set -euo pipefail
+          kind=build
+          if [ "$RUN_NAME" = 'Prepare official upstream update PR' ]; then kind=sync; fi
+          if [ "$CONCLUSION" = failure ] || [ "$CONCLUSION" = timed_out ] || [ "$CONCLUSION" = cancelled ]; then
+            python3 release/notify-failure.py --repository "$REPOSITORY" --kind "$kind" --run-url "$RUN_URL" --reason '自动化任务失败；请查看失败步骤和修复说明。'
+          elif [ "$CONCLUSION" = success ] && [ "$kind" = build ]; then
+            python3 release/notify-failure.py --repository "$REPOSITORY" --kind "$kind" --run-url "$RUN_URL" --resolved
+          fi
