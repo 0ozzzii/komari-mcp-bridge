@@ -1,0 +1,22 @@
+{
+  "date": "2026-10-08",
+  "scope": "Linux loopback panel/bridge with fresh SQLite and Chromium; simulated local audit, node HTTP presence and saved output; no remote device or production actions",
+  "checks_passed": [
+    "administrator-only JS and log HTTP routes",
+    "node/type/problem filters and server-list ordering",
+    "stable audit pagination and single rotation recovery",
+    "rotation eviction explicitly requires refresh",
+    "bounded reverse scan and malformed record handling",
+    "allowlisted fields exclude command, Authorization, Cookie and nonce",
+    "safe text rendering of HTML-like content",
+    "UTF-8 output page boundaries and invalid byte replacement",
+    "saved output truncation/gap shown",
+    "reading does not renew session idle timer",
+    "rapid modal close/reopen",
+    "mobile modal width and single outer page scrollbar",
+    "full bridge race suite and vet",
+    "panel/terminal affected race suites",
+    "22 release/installer/upstream review regression tests"
+  ],
+  "production_validation": false
+}

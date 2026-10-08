@@ -1,0 +1,78 @@
+{
+  "repository": "0ozzzii/komari-mcp-bridge",
+  "distribution_repository": "0ozzzii/komari-mcp-bridge-release",
+  "container_repository": "ghcr.io/0ozzzii/komari-mcp-bridge",
+  "go_version": "1.25.0",
+  "node_version": "22",
+  "upstream": {
+    "panel": {
+      "repository": "komari-monitor/komari",
+      "commit": "39cb3f59b2837e8d052203bfbbf3187888e5fa4c",
+      "patches": [],
+      "overlay": null
+    },
+    "agent": {
+      "repository": "komari-monitor/komari-agent",
+      "commit": "828afafe7fb5b1b58c1232094e1e46320719016e",
+      "patches": [
+        "agent-patches/0001-container-resource-scope.patch",
+        "agent-patches/0002-connection-stability.patch",
+        "agent-patches/0003-execution-protection.patch",
+        "agent-patches/0004-windows-shell-metadata.patch"
+      ],
+      "overlay": "agent-patches/overlay"
+    },
+    "web": {
+      "repository": "komari-monitor/komari-web",
+      "commit": "0321789bc1989e53df729dfc98bed2a2800c39c6",
+      "patches": [
+        "web-patches/0001-mcp-admin-menu.patch",
+        "web-patches/0002-agent-release-source.patch",
+        "web-patches/0003-mcp-management-layout.patch"
+      ],
+      "overlay": null
+    }
+  },
+  "panel_targets": [
+    "linux/amd64",
+    "linux/arm64",
+    "linux/386",
+    "linux/riscv64",
+    "linux/loong64",
+    "windows/amd64",
+    "windows/arm64",
+    "windows/386"
+  ],
+  "agent_targets": [
+    "linux/amd64",
+    "linux/arm64",
+    "linux/386",
+    "linux/arm",
+    "linux/loong64",
+    "windows/amd64",
+    "windows/arm64",
+    "windows/386",
+    "darwin/amd64",
+    "darwin/arm64",
+    "freebsd/amd64",
+    "freebsd/arm64",
+    "freebsd/386",
+    "freebsd/arm"
+  ],
+  "bridge_targets": [
+    "linux/amd64",
+    "linux/arm64",
+    "linux/386",
+    "linux/arm",
+    "linux/loong64",
+    "windows/amd64",
+    "windows/arm64",
+    "windows/386",
+    "darwin/amd64",
+    "darwin/arm64",
+    "freebsd/amd64",
+    "freebsd/arm64",
+    "freebsd/386",
+    "freebsd/arm"
+  ]
+}

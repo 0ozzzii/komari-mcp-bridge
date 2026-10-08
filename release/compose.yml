@@ -1,0 +1,33 @@
+# Prebuilt official-style images: no compiler or source checkout on the host.
+services:
+  panel:
+    image: ghcr.io/0ozzzii/komari-mcp-bridge:${KOMARI_RELEASE_VERSION:-latest}
+    restart: unless-stopped
+    ports: ["127.0.0.1:18080:25774"]
+    environment:
+      KOMARI_MCP_UPSTREAM_URL: http://bridge:8967/mcp
+      KOMARI_MCP_CONTROL_URL: http://bridge:8968
+      KOMARI_MCP_CONTROL_TOKEN: ${BRIDGE_CONTROL_TOKEN:?Set a private independent control token}
+    volumes: ["panel-data:/app/data"]
+    networks: [backend]
+  bridge:
+    image: ghcr.io/0ozzzii/komari-mcp-bridge-mcp:${KOMARI_RELEASE_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      KOMARI_BASE_URL: http://panel:25774
+      KOMARI_API_KEY: ${KOMARI_API_KEY:?Create a panel administrator API key and configure it privately}
+      BRIDGE_CONTROL_TOKEN: ${BRIDGE_CONTROL_TOKEN:?Set a private independent control token}
+      BRIDGE_BIND_ADDRESS: 0.0.0.0:8967
+      BRIDGE_CONTROL_ADDRESS: 0.0.0.0:8968
+      BRIDGE_ALLOW_INTERNAL_CONTROL: "1"
+      BRIDGE_STATE_DIR: /state
+    volumes: ["bridge-state:/state"]
+    # No public or host management port. Only the panel forwards public /mcp.
+    networks: [backend]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+volumes:
+  panel-data:
+  bridge-state:
+networks:
+  backend:

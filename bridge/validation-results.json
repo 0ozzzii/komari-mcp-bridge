@@ -1,0 +1,105 @@
+{
+  "date": "2026-10-05",
+  "scope": "本地模拟 Komari 协议、真实本地 PTY、官方 MCP SDK 与实际桥接二进制；非生产端到端",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "versions": {
+    "server_base": "202579014bf9670350a673ba91c240174805c9a0",
+    "agent_base": "828afafe7fb5b1b58c1232094e1e46320719016e",
+    "web": "0321789bc1989e53df729dfc98bed2a2800c39c6",
+    "go": "1.25.0",
+    "mcp_sdk": "1.8.0"
+  },
+  "suites": {
+    "bridge": {
+      "top_level_passed": [
+        "TestScopedAuthenticationRevocationAndPersistence",
+        "TestPersistentShellAndCommandSemantics",
+        "TestMCPCallsReusePTYAcrossClientReconnectAndProtectKeys",
+        "TestControlSeparationAndGlobalSwitch",
+        "TestStandaloneDaemonStartsAndExecutesThroughMCP",
+        "TestStdioAdapterExitDoesNotCloseDaemonTerminal",
+        "TestStreamingWaitInputAndIsolation",
+        "TestAmbiguousFileMutationDoesNotReplayOrCrossScope",
+        "TestPrefixAndBoundedNativeFileTransfer",
+        "TestRedirectDoesNotForwardAdministratorKey",
+        "TestReconnectContinuityAndNoReplay",
+        "TestUTF8CursorAndOutputLimit",
+        "TestParserFragmentationEchoAndCoalescing",
+        "TestRestartAndNetworkLossNeverReplayAnUncertainCommand",
+        "TestOverflowRetentionExpiryAndGeneration",
+        "TestInterruptAndCloseDoNotInventSuccess"
+      ],
+      "failed": [],
+      "skipped_tests": []
+    },
+    "panel": {
+      "top_level_passed": [
+        "TestManagementPreservesAuthentication2FAAndCredentialBoundary",
+        "TestControlRedirectAndUnconfiguredDaemon"
+      ],
+      "failed": [],
+      "skipped_tests": []
+    },
+    "agent": {
+      "top_level_passed": [
+        "TestIsPhysicalDisk",
+        "TestDetailedGPUDetection",
+        "TestDetailedGPUInfo",
+        "TestGpuName",
+        "TestFormatGPUNameList",
+        "TestConnectionsCount",
+        "TestConnectionsCountCombinesProcAndFallbackErrors",
+        "TestParseNics",
+        "TestShouldInclude",
+        "TestNetworkSpeedFallback",
+        "TestNetworkSpeedWithoutMonthRotate",
+        "TestNetworkSpeedWithMonthRotate",
+        "TestNetworkSpeedWithNicFilters",
+        "TestOsName",
+        "TestCgroupV2ContainerMemoryAndParentQuota",
+        "TestCgroupNamespaceRootDoesNotAppendHostPath",
+        "TestCgroupV1MemorySwapAndCPU",
+        "TestUnlimitedAndUnreadableCgroupsNeverUseHostMemory",
+        "TestCgroupWorkingSetUnderflowAndUsageClamp",
+        "TestCPUSetValidation",
+        "TestCgroupMembershipTraversalRejected",
+        "TestResourceScopeOverride",
+        "TestVirtualized",
+        "TestMOTDWarningIsAppendedAndRestored",
+        "TestMOTDWarningIsIdempotent",
+        "TestMOTDWarningRemovesStaleWarningAfterRestart",
+        "TestMOTDWarningRemovesFileContainingOnlyStaleWarning",
+        "TestMOTDWarningPreservesAdministratorChanges",
+        "TestMOTDWarningCreatesAndRemovesMissingFile",
+        "TestMOTDWarningIsRemovedWhenRemoteControlIsDisabled",
+        "TestMOTDWarningRejectsMalformedManagedBlock",
+        "TestMOTDWarningFollowsSymlink",
+        "TestLegacyUpdateMOTDHookCleanup"
+      ],
+      "failed": [],
+      "skipped_tests": [
+        "TestAMDSysfsDetailedInfo"
+      ]
+    }
+  },
+  "artifacts": {
+    "bridge": {
+      "bytes": 9109796,
+      "sha256": "2957e50355c4044612d49760bc0a777335f417bfb07d55cea8f506d615aa3f32"
+    },
+    "server": {
+      "bytes": 33994208,
+      "sha256": "60dc0cc9281c8b36c56ca220d33d30fe2aef2259c83730f3d7869efd658b2ace"
+    },
+    "agent_original": {
+      "bytes": 8126648,
+      "sha256": "58f3941b820af79873539f813a20ad8b67e79d2551e16e9b5ba5e4d8afc63535"
+    },
+    "agent_fixed": {
+      "bytes": 8151224,
+      "sha256": "179c94a7c61ef68689b6d2753aed0b8b930ad46f0688e52491326d96c86cc143"
+    }
+  },
+  "deployment_executed": false,
+  "agent_build_flags": "linux/amd64 CGO_ENABLED=0 -buildvcs=false -trimpath -ldflags=-s -w"
+}

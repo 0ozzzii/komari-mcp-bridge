@@ -1,0 +1,176 @@
+{
+  "validated_at_utc": "2026-10-07T19:09:05.988798+00:00",
+  "source_baselines": {
+    "panel": "39cb3f59b2837e8d052203bfbbf3187888e5fa4c",
+    "agent": "828afafe7fb5b1b58c1232094e1e46320719016e",
+    "web": "0321789bc1989e53df729dfc98bed2a2800c39c6"
+  },
+  "scope": "Linux isolated validation only; no production changes; no Windows 测试节点, Cloudflare, real remote device, hosted Actions or external model API validation",
+  "suites": {
+    "panel": {
+      "passed_tests": 21,
+      "skipped_tests": [],
+      "failed_tests": 0,
+      "race_detector": true
+    },
+    "bridge": {
+      "passed_tests": 25,
+      "skipped_tests": [],
+      "failed_tests": 0,
+      "race_detector": true,
+      "standalone_daemon_and_stdio_executed": true
+    },
+    "probe": {
+      "passed_tests": 83,
+      "skipped_tests": [
+        "TestAMDSysfsDetailedInfo"
+      ],
+      "failed_tests": 0,
+      "race_detector": true,
+      "server_selection": "Test(MonitorControlFramesRefreshReadDeadline|OutputBudget|TaskDeadline); unrelated external ICMP/TCP/HTTP tests not run"
+    },
+    "native": {
+      "passed_tests": 2,
+      "skipped_tests": [],
+      "failed_tests": 0,
+      "race_detector": true
+    }
+  },
+  "release_unit_tests": {
+    "passed": 19,
+    "failed": 0,
+    "external_APIs": "local mocks only"
+  },
+  "browser": {
+    "checks": [
+      "server-list weight ordering and stable selection",
+      "ISO and emoji flag assets",
+      "no UUID in node labels",
+      "online/offline filter",
+      "select filtered adds without losing hidden selection",
+      "offline last report timestamp and unknown state",
+      "keys collapsed by default and expandable",
+      "desktop and mobile single page scrollbar",
+      "thin bounded list scrollbar",
+      "dialog visible after scrolling",
+      "all current offline nodes selectable",
+      "clear and individual selection",
+      "native creation dialog with complete credential URL",
+      "URL-only initialize and 15 tools",
+      "scoped node list",
+      "future nodes not automatically granted",
+      "existing URL reflects edited scope",
+      "key disable rejects same URL",
+      "dialog close clears plaintext",
+      "panel log does not contain URL key",
+      "native MCP sidebar visible",
+      "management frame loaded",
+      "toggle enable/disable persisted",
+      "direct route refresh",
+      "server list navigation and return",
+      "anonymous login redirect",
+      "anonymous management API rejected",
+      "MCP-only execution policy dialog",
+      "invalid policy rejected",
+      "device policy persistence",
+      "Key limits and reset inheritance",
+      "no browser JS errors"
+    ],
+    "scope": "actual Linux loopback panel, fresh SQLite/admin login, bridge and Chromium; node presence uses a locally simulated probe HTTP report; no production, Windows 测试节点 or remote probe"
+  },
+  "build_matrix": {
+    "panel": [
+      "linux/amd64",
+      "linux/arm64",
+      "linux/386",
+      "linux/riscv64",
+      "linux/loong64",
+      "windows/amd64",
+      "windows/arm64",
+      "windows/386"
+    ],
+    "agent": [
+      "linux/amd64",
+      "linux/arm64",
+      "linux/386",
+      "linux/arm",
+      "linux/loong64",
+      "windows/amd64",
+      "windows/arm64",
+      "windows/386",
+      "darwin/amd64",
+      "darwin/arm64",
+      "freebsd/amd64",
+      "freebsd/arm64",
+      "freebsd/386",
+      "freebsd/arm"
+    ],
+    "bridge": [
+      "linux/amd64",
+      "linux/arm64",
+      "linux/386",
+      "linux/arm",
+      "linux/loong64",
+      "windows/amd64",
+      "windows/arm64",
+      "windows/386",
+      "darwin/amd64",
+      "darwin/arm64",
+      "freebsd/amd64",
+      "freebsd/arm64",
+      "freebsd/386",
+      "freebsd/arm"
+    ]
+  },
+  "build_matrix_scope": "All configured targets compiled locally; cross-compiled operating systems not runtime tested",
+  "setup": "Complete dev/setup.sh executed; subsequent changed source paths revalidated with relevant race tests, builds and native integration",
+  "clean_baseline_preparation": "All three agent patches and overlay reconstructed and terminal/executionguard tests passed in a separate temporary clean clone",
+  "implemented_rules": {
+    "memory_gib_tiers": [
+      5,
+      8,
+      10,
+      12
+    ],
+    "unknown_resource_bridge_limit": 1,
+    "lease_seconds": 600,
+    "renewal": "new accepted command/interactive input only; never polling, heartbeat or duplicate command_id",
+    "default_execution_timeout_seconds": 1800,
+    "default_max_execution_timeout_seconds": 21600,
+    "maintenance_slots_per_node": 1,
+    "maintenance_default_seconds": 900,
+    "maintenance_default_enabled": false,
+    "force_close_default_enabled": false,
+    "force_close_requires_explicit_device_and_key_permission": true,
+    "native_task_output_default_bytes": 2097152
+  },
+  "limitations": [
+    "slot bounds are not child-process or memory isolation",
+    "working-set pressure is approximate; no guarantee against OOM",
+    "missing upstream bytes cannot be replayed",
+    "restart does not preserve watchdogs or authorization leases",
+    "old probes cannot provide managed execution guard acknowledgement",
+    "persistent shell scope remains Linux POSIX /bin/sh",
+    "disabled force-close means ignored SIGINT remains uncertain",
+    "detached descendants can outlive terminal or task cancellation",
+    "probe configuration applied through managed terminal, not monitoring RPC",
+    "no Release created or main merged"
+  ],
+  "source_sha256": {
+    "agent-patches/0003-execution-protection.patch": "0dbf3424d28ff4e9cbb8839ba828f78c263f7be786d9cb5453201ec9fb0c3eaa",
+    "agent-patches/overlay/executionguard/guard.go": "555a463b76cd7bec53ae6842eec09608450543a4fb35d54792ff5d90bc8f3f83",
+    "agent-patches/overlay/terminal/execution.go": "3c83ba2040de743aa4cea5af9ec49a36a6d134fef4762c359811df824e25402c",
+    "bridge/internal/execution/policy.go": "8119664d5c611528e69e6675052a6e633871fc8e1c948d3e82d7ed6997303ef8",
+    "bridge/internal/terminal/execution.go": "6c43c883e53bb286c8b243632458996ff53c53d4c1ed8f30b0621e2584159e98",
+    "internal/mcpbridge/management.html": "675e0e4bfa6e02feb98e6d33fc220249c870ae552a7c6c79cff17e8f34894d89"
+  },
+  "toolchain": {
+    "go": "1.25.0",
+    "node_local": "24.19.0",
+    "npm_local": "11.9.0",
+    "zig": "0.14.1",
+    "chromium": "151.0.7922.173",
+    "note": "Release CI still pins Node 22; hosted CI was not run here"
+  },
+  "resource_validation": "cgroup file fixtures and mocked resource-pressure admission, not real 256 MiB device stress"
+}

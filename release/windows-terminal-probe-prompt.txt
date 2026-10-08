@@ -1,0 +1,45 @@
+你是 Windows 测试节点 环境的探测 Agent。请协助开发 Agent 核实 Komari MCP 的 Windows 终端兼容问题。本轮只做只读检查和隔离终端验证，不升级、替换、重启现有面板、桥接或探针，不修改系统执行策略、防火墙、Cloudflare Tunnel、认证和自启动配置，不进行进程或自启动项清理。
+
+目标：弄清实际 Shell、ConPTY 字节流行为、PowerShell 持续作用域和退出码语义。不要只验证 WebSocket 返回 101，也不要将 command_run 超时报成命令失败或擅自重新派发命令。
+
+开发侧已获得的证据：真实 Windows GitHub CI 的 ConPTY 会丢弃原始 READY 标记两侧的 0x1E/0x1F，虽然屏幕显示 KMB:...:READY:PID，原字节解析器仍无法识别。候选修复位于 PR https://github.com/0ozzzii/komari-mcp-bridge/pull/5，使用 Windows 专用可打印标记与匹配探针的 marker_protocol 协商；尚不能据此推断 Windows 测试节点 Build 17763 的实际行为。本轮不要把候选分支安装到现有服务，仍以探测为目的。
+
+优先使用已通过 Windows CI 的诊断附件（分别测试 powershell.exe 和已安装的 pwsh.exe）：在 PR #5 对应的最新成功 Build and validate 工作流里，下载 komari-windows-conpty-probe artifact。它包含独立诊断 exe、sha256sums.txt、source-commit.txt；不是服务安装包，不连接真实面板，不含真实节点凭据。在新临时目录解压，核对来源提交与 SHA256 后运行：
+& .\komari-conpty-probe-windows-amd64.exe -test.run '^TestWindowsConPTYPowerShellPersistentProtocol$' -test.v -test.timeout 90s
+保存输出与退出码。程序分别创建自己的临时 Windows PowerShell 和已安装的 PowerShell 7/ConPTY，测试临时父进程内的目录、变量、函数、子 cmd 退出码、中文、Get-Process 只读输出和恢复标记，然后关闭自己的 ConPTY。不会安装服务、改系统执行策略或结束现有进程。无需在 Windows 测试节点 安装 Go 或编译源码。成功不代表真实面板中继已验收；失败时保留日志，不反复运行或自动改配置。若整个诊断超时崩溃，依据 temporary_powershell_pid 与启动时间核对，只清理确属本次测试的残留进程，不批量结束 powershell.exe。如果没有可用 GitHub 认证下载 artifact，请用户转交这个诊断附件，不要求用户在聊天中贴 GitHub Token。
+
+1. 先报告环境和版本
+核对 Windows 产品、完整 Build、CPU 架构、当前身份、探针服务实际运行身份，面板/桥接/探针版本与构建 SHA。记录相关二进制的路径、SHA256 和 PID。只读取必要字段，不打印服务参数中的 Token、Authorization、Cookie 或完整环境变量。不要从“登录的是 Administrator”推断探针服务身份。
+核对 powershell.exe、pwsh.exe、cmd.exe 是否存在，PowerShell 版本、LanguageMode、ExecutionPolicy 各作用域、PSReadLine 版本；不要修改它们。确认探针终端实际选择哪个 Shell、初始目录，以及是否加载 Profile。如果现有接口不能直接确认，标注未知，不凭猜测填写。
+
+2. 隔离验证
+分别创建独立、临时的 ConPTY + powershell.exe 与已安装的 pwsh.exe -NoLogo -NoProfile 会话，使用探针依赖的同版 ConPTY 库或开发 Agent 提供的测试程序。不能用普通重定向管道代替 ConPTY 后声称结论等同于真实探针。
+如必须经 Komari 验证，仅在用户已授权的 Windows 测试节点 节点上新建独立测试 request_id，不接管已有网页终端，也不使用尚未修复的桥接反复发送 POSIX 初始化命令。
+记录：管理员 WebSocket 握手、request_id 获取、探针回连、Shell 进程启动、实际输入发送、真实输出收到。这些阶段分开报告。
+
+3. 原始标记传输（关键）
+在 PowerShell 中使用一个新随机测试 nonce，并执行：
+$ctx = '<随机测试nonce>'; [Console]::Write([char]30 + 'KMB:' + $ctx + ':READY:' + $PID + [char]31)
+捕获 ConPTY 或管理员终端 WebSocket 的原始输出字节，报告是否确实包含十六进制 1e 4b 4d 42 ... 1f（即 0x1E、KMB:、nonce、READY、PID、0x1F），是否控制字符被丢弃、转成可见字符，或被 ANSI/换行打断。提供只包含该测试标记的短十六进制片段，不提供完整可能含敏感信息的终端录制。
+分别以 80 列和较宽终端验证，比较回车 CR 与换行 LF 的输入。检查 PSReadLine 是否产生光标位置查询、等待终端回应；如有，记录现象，不以删除用户配置解决。可仅在临时会话内 Remove-Module PSReadLine 后对照验证。
+再对照可打印标记：
+[Console]::Write([char]126 + 'KMB:' + $ctx + ':READY:' + $PID + [char]126)
+实际字节应为 ~KMB:<nonce>:READY:<PID>~。标记的两个 ~ 在运行时由 char126 生成，不能把完整标记原样写进输入字符串，再把终端输入回显误当实际输出。核对较长 END 和 RESUME 标记在 80 列下是否被换行/ANSI 打断。
+不要使用 "$ctx:READY" 的插值形式，它可能被解析为变量作用域。不能以“屏幕看到了 READY”替代字节证据。
+
+4. 持续上下文
+在同一个临时父 PowerShell 中，分两次输入完成：设置目录到 $env:TEMP，再 Get-Location；设置 $env:KOMARI_HANDOFF_TEST_VAR='hello'、普通变量 $handoffVar='persisted'、函数 handoffFunc，然后在第二次输入读取它们。
+对照点号执行 . ([ScriptBlock]::Create(...)) 与调用运算符 & 的作用域差异。仅执行无副作用的测试脚本。确认普通变量和函数没有只留在子作用域，并记录父 Shell PID 是否相同。不要每条命令重新启动 PowerShell 来证明“复用”。
+
+5. 退出码与 UTF-8
+先执行 cmd.exe /d /c exit 7，立即记录 $? 和 $LASTEXITCODE；再执行一个成功 PowerShell 命令，立即记录两者，说明 $LASTEXITCODE 是否保留之前的 7。
+在临时会话内把 $global:LASTEXITCODE 置空后执行测试脚本，验证成功、原生命令非零、throw、Write-Error（非终止错误）、多行/引号，以及 Write-Output '中文测试'。每次记录观察到的完成标记与退出码，不把未收到结束标记当作 0。
+可测试 cmd.exe /d /c exit 3010，确认退出码不被强行限制为 POSIX 的 0～255。不要用 exit 7 直接退出持续父 Shell。
+如当前默认策略禁止 .ps1，只报告；可对照内存 ScriptBlock 在当前 LanguageMode 下是否可执行，不修改系统执行策略。
+
+6. 中断（仅测试自己创建的程序）
+可在临时会话执行 Start-Sleep -Seconds 10，并向该会话发送 Ctrl+C 字节 0x03，记录是否结束、父 Shell 是否保留、是否有可确认的完成事件。不要中断任何现存生产进程。若现有权限不能创建独立测试会话，跳过此项并说明原因。
+
+7. 输出格式
+按“检查项 | 实际结果 | 证据 | 尚未确定”表格输出；说明用的是本地 ConPTY 模拟还是实际 Komari 链路、测试时间、Shell 和终端宽度。列出创建的临时资源，并只清理这些资源，确认现有服务/PID及配置未改动。
+遇到不确定或权限缺失，停止相应测试、保留事实，继续不依赖它的只读检查。不要安装未校验的程序，不要贴出任何密钥；需要用户补充时集中用弹窗询问。最后给开发 Agent 一段简明结论：哪些假设成立、哪些被实际数据否定、是否需要更换 Windows 标记传输方式。

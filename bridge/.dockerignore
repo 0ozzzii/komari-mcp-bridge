@@ -1,0 +1,6 @@
+bin
+bridge-data
+.git
+.env
+*.env
+deploy/*.env

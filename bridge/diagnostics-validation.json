@@ -1,0 +1,28 @@
+{
+  "validated_at": "2026-10-07T16:56:53.137126+00:00",
+  "scope": "Isolated Linux tests. No production, Windows Windows 测试节点, Cloudflare, live model-provider review, GitHub email delivery or real external probe acceptance.",
+  "passed": [
+    "Bridge go test -race including actual standalone daemon and stdio adapter",
+    "Background session/command metadata events, deduplicated on unchanged state",
+    "Audit does not contain scoped/upstream credentials or command body",
+    "Repeated audit rotation, including Windows-compatible replacement sequence (Linux execution only)",
+    "Offline diagnostic archive excludes credentials, nonce, config, command hashes and raw terminal output",
+    "Diagnostic history and source byte limits; malformed input noted; existing archive preserved",
+    "Actual compiled diagnostics CLI exports and refuses overwrite without network",
+    "Lost END after remote side effect produces uncertainty, does not replay identical command_id, rejects next normal command",
+    "Actual panel relay + actual local probe PTY nativechain tests (29.383 seconds; auth/discovery/events fixtures)",
+    "Panel MCP UI Chromium tests for order/filter/selection/flags/collapsed keys/single scrolling/mobile/dialog",
+    "19 release and synchronization/review/failover/notification regression tests",
+    "actionlint, Go vet and shell/Python syntax checks"
+  ],
+  "unverified": [
+    "Actual Windows services/NTFS/power-loss and old Windows 测试节点 local compatibility modifications",
+    "Final GitHub Actions hosted matrix/public Release/GHCR",
+    "Third-party primary/backup API keys, model judgments, automatic merge and email delivery",
+    "Real remote probe interruption, long operation and proxy/network behavior"
+  ],
+  "blocked_optional": {
+    "docker_images": "Alpine APK source dl-cdn.alpinelinux.org denied by cloud network policy; no bypass; image runtime not validated locally"
+  },
+  "design_choice": "User selected diagnostic logs and no-replay fault tests first. Remote result journal, replay protocol and durable probe tasks remain future enhancements."
+}

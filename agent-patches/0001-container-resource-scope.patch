@@ -1,0 +1,160 @@
+diff --git a/cmd/flags/flag.go b/cmd/flags/flag.go
+index 272af88..41350cf 100644
+--- a/cmd/flags/flag.go
++++ b/cmd/flags/flag.go
+@@ -1,6 +1,8 @@
+ package flags_pkg
+ 
+ type Config struct {
++	ResourceScope string `json:"resource_scope" env:"AGENT_RESOURCE_SCOPE"` // auto, host, or container metrics
++
+ 	AutoDiscoveryKey    string  `json:"auto_discovery_key" env:"AGENT_AUTO_DISCOVERY_KEY"`         // 自动发现密钥
+ 	DisableAutoUpdate   bool    `json:"disable_auto_update" env:"AGENT_DISABLE_AUTO_UPDATE"`       // 禁用自动更新
+ 	DisableWebSsh       bool    `json:"disable_web_ssh" env:"AGENT_DISABLE_WEB_SSH"`               // 禁用远程控制（web ssh 和 rce）
+diff --git a/cmd/root.go b/cmd/root.go
+index 3e38155..19321f3 100644
+--- a/cmd/root.go
++++ b/cmd/root.go
+@@ -10,6 +10,7 @@ import (
+ 	"os"
+ 	"os/signal"
+ 	"reflect"
++	"runtime"
+ 	"strconv"
+ 	"strings"
+ 	"syscall"
+@@ -49,6 +50,12 @@ var RootCmd = &cobra.Command{
+ 				return fmt.Errorf("failed to parse config file: %w", err)
+ 			}
+ 		}
++		if flags.ResourceScope != "" && flags.ResourceScope != "auto" && flags.ResourceScope != "host" && flags.ResourceScope != "container" {
++			return fmt.Errorf("invalid --resource-scope: expected auto, host, or container")
++		}
++		if flags.ResourceScope == "container" && runtime.GOOS != "linux" {
++			return fmt.Errorf("container resource scope is supported on Linux")
++		}
+ 		if flags.PreferIPVersion != "" && flags.PreferIPVersion != "4" && flags.PreferIPVersion != "6" {
+ 			return fmt.Errorf("invalid --prefer-ip-version value %q: expected 4 or 6", flags.PreferIPVersion)
+ 		}
+@@ -160,6 +167,7 @@ func Execute() {
+ }
+ 
+ func init() {
++	RootCmd.PersistentFlags().StringVar(&flags.ResourceScope, "resource-scope", "auto", "Metric boundary: auto detects containers; host/container explicitly override")
+ 	RootCmd.PersistentFlags().StringVarP(&flags.Token, "token", "t", "", "API token")
+ 	//RootCmd.MarkPersistentFlagRequired("token")
+ 	RootCmd.PersistentFlags().StringVarP(&flags.Endpoint, "endpoint", "e", "", "API endpoint")
+diff --git a/monitoring/monitoring.go b/monitoring/monitoring.go
+index 9572173..4ac1439 100644
+--- a/monitoring/monitoring.go
++++ b/monitoring/monitoring.go
+@@ -12,6 +12,8 @@ import (
+ var flags = pkg_flags.GlobalConfig
+ 
+ type report struct {
++	ResourceScope map[string]string `json:"resource_scope,omitempty"`
++
+ 	CPU         cpuReport         `json:"cpu"`
+ 	Ram         usageReport       `json:"ram"`
+ 	Swap        usageReport       `json:"swap"`
+@@ -76,7 +78,7 @@ func GenerateReport() []byte {
+ 
+ 	cpu := unit.Cpu()
+ 	cpuUsage := cpu.CPUUsage
+-	if cpuUsage <= 0.001 {
++	if cpuUsage <= 0.001 && !unit.ContainerResourceScope() {
+ 		cpuUsage = 0.001
+ 	}
+ 	data.CPU = cpuReport{Usage: cpuUsage}
+@@ -145,6 +147,13 @@ func GenerateReport() []byte {
+ 	}
+ 	// 基础模式下，GPU信息已在basicInfo中处理
+ 
++	data.ResourceScope = unit.ResourceScopeInfo()
++	if data.ResourceScope["mode"] == "container" {
++		message += "resource_scope=container; load and disk quota unavailable; uptime=host boot; network=network namespace.\n"
++		if warning := data.ResourceScope["warning"]; warning != "" {
++			message += warning + "\n"
++		}
++	}
+ 	data.Message = message
+ 
+ 	s, err := json.Marshal(data)
+diff --git a/monitoring/unit/cpu.go b/monitoring/unit/cpu.go
+index 72833da..386672b 100644
+--- a/monitoring/unit/cpu.go
++++ b/monitoring/unit/cpu.go
+@@ -22,6 +22,10 @@ type CpuInfo struct {
+ 
+ func Cpu() CpuInfo {
+ 	cpuinfo := CpuStaticInfo()
++	if cores, usage, active := containerCPU(); active {
++		cpuinfo.CPUCores, cpuinfo.CPUPhysicalCores, cpuinfo.CPUUsage = cores, 0, usage
++		return cpuinfo
++	}
+ 
+ 	percentages, err := cpu.Percent(0, false)
+ 	if err == nil && len(percentages) > 0 {
+@@ -68,6 +72,9 @@ func CpuStaticInfo() CpuInfo {
+ 		cpuinfo.CPUPhysicalCores = physicalCores
+ 	}
+ 
++	if cores, active := containerCPUCores(); active {
++		cpuinfo.CPUCores, cpuinfo.CPUPhysicalCores = cores, 0
++	}
+ 	return cpuinfo
+ }
+ 
+diff --git a/monitoring/unit/disk.go b/monitoring/unit/disk.go
+index 7489449..5369481 100644
+--- a/monitoring/unit/disk.go
++++ b/monitoring/unit/disk.go
+@@ -13,6 +13,10 @@ type DiskInfo struct {
+ }
+ 
+ func Disk() DiskInfo {
++	// statfs capacity is shared filesystem capacity, not a container storage quota.
++	if ContainerResourceScope() && flags.IncludeMountpoints == "" {
++		return DiskInfo{}
++	}
+ 	diskinfo := DiskInfo{}
+ 	// 获取所有分区，使用 true 避免物理磁盘被 gopsutil 错误排除
+ 	usage, err := disk.Partitions(true)
+diff --git a/monitoring/unit/load.go b/monitoring/unit/load.go
+index 949ed1c..0a7323e 100644
+--- a/monitoring/unit/load.go
++++ b/monitoring/unit/load.go
+@@ -11,6 +11,9 @@ type LoadInfo struct {
+ }
+ 
+ func Load() LoadInfo {
++	if ContainerResourceScope() {
++		return LoadInfo{}
++	}
+ 
+ 	avg, err := load.Avg()
+ 	if err != nil {
+diff --git a/monitoring/unit/mem.go b/monitoring/unit/mem.go
+index f025869..c682572 100644
+--- a/monitoring/unit/mem.go
++++ b/monitoring/unit/mem.go
+@@ -182,6 +182,9 @@ func CallFree() RamInfo {
+ }
+ 
+ func Ram() RamInfo {
++	if value, active := containerRam(); active {
++		return value
++	}
+ 	// Use global config
+ 	if pkg_flags.GlobalConfig.MemoryIncludeCache {
+ 		v, err := mem.VirtualMemory()
+@@ -211,6 +214,9 @@ func Ram() RamInfo {
+ }
+ 
+ func Swap() RamInfo {
++	if value, active := containerSwap(); active {
++		return value
++	}
+ 	swapinfo := RamInfo{}
+ 
+ 	if runtime.GOOS == "linux" {

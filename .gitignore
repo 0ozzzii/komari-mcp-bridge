@@ -1,0 +1,59 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+__debug*
+
+# local development data
+komari.db
+/data
+/utils/geoip/data
+.vscode/
+/backup
+/cache
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env
+
+# build
+komari
+/dist/
+.codex
+
+/web/filemanager/data
+
+# Generated frontend archive and isolated MCP runtime data
+/web/public/defaultTheme/dist.tar.zst
+/web/public/defaultTheme/komari-theme.json
+/bridge/bridge-data/
+/bridge/bin/
+/bridge/deploy/komari-mcp.env
+/.release-agent/
+release/__pycache__/
+release/tests/__pycache__/
+
+dev/__pycache__/
+
+# Private deployment handoffs and local exports never enter the public tree.
+/.private/
+/local/
+.env.*
+!.env.example

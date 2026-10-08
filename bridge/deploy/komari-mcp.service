@@ -1,0 +1,27 @@
+[Unit]
+Description=Komari persistent MCP bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=komari-mcp
+Group=komari-mcp
+WorkingDirectory=/opt/komari-mcp
+EnvironmentFile=/etc/komari-mcp.env
+ExecStart=/opt/komari-mcp/komari-mcp serve
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+StateDirectory=komari-mcp
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

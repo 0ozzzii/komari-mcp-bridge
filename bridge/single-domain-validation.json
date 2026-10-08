@@ -1,0 +1,30 @@
+{
+  "date_utc": "2026-10-07",
+  "scope": "LOCAL Linux integration; no Windows 测试节点 Windows execution, Cloudflare Tunnel or production deployment",
+  "previous_source_commit": "7db5d4e881b4464940813de7fd4cdbc8f493b8b4",
+  "checks": {
+    "panel_mcp_security_and_streaming_race": "passed: early streaming through HTML/plugin wrappers, credential separation, same-origin validation, redirects refused, control routes excluded",
+    "actual_router_and_sdk_race": "passed: IdentityMiddleware + PrivateSiteMiddleware, public Host internally rewritten, initialize and 14 tools, unauthorized keys rejected, oversize request rejected, disabled tools return MCP_DISABLED",
+    "persistent_terminal_via_single_domain_race": "passed: actual panel /mcp + bridge + actual terminal forwarder + actual probe PTY; 22-second silence, reconnect, same shell cd/export, exit code 7",
+    "panel_regression_race": "passed: mcpbridge, security, rpc/jsonrpc, terminal, connection; router compiled",
+    "go_vet": "passed: mcpbridge, api, router",
+    "linux_panel_build": "passed: CGO SQLite, genuine embedded frontend"
+  },
+  "fixture_boundaries": [
+    "loopback network",
+    "terminal event dispatch, admin terminal authentication and node discovery are fixtures",
+    "MCP authentication uses actual scoped-key store and official SDK"
+  ],
+  "artifact": {
+    "platform": "linux/amd64",
+    "name": "komari-panel-single-domain",
+    "bytes": 34056448,
+    "sha256": "0d19a51b8f7c3db0961b5e2477d997992901fbb36992e13b7fab59ef8cf6c098"
+  },
+  "unverified": [
+    "Windows Build 17763 runtime and persistent storage",
+    "Cloudflare route/Access/streaming behavior",
+    "new real Linux container probe",
+    "actual target AI client MCP configuration"
+  ]
+}

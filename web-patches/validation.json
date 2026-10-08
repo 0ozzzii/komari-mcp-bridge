@@ -1,0 +1,27 @@
+{
+  "date_asia_shanghai": "2026-10-07",
+  "feature": "native top-level MCP after Account, route /admin/mcp, inside original admin layout",
+  "official_frontend_commit": "0321789bc1989e53df729dfc98bed2a2800c39c6",
+  "base_server_commit": "2263532024065737a1b49265cef9efd982896037",
+  "frontend_patch_sha256": "4ded8bc8e3ce3fa1d952d840a8cea7709787be478d5ed138693ff670746c1518",
+  "assets": {
+    "web/public/defaultTheme/dist.tar.zst": {
+      "bytes": 2123881,
+      "sha256": "49852780106849909f3ae301d4b34a9f6502c0308feb2fe1f72b443e31391812"
+    },
+    "web/public/defaultTheme/komari-theme.json": {
+      "bytes": 8702,
+      "sha256": "7ff277b8a128e49ee5f17c7c11dbd166a417bca0153ab38bef522374486a6731"
+    }
+  },
+  "validation": "actual local Linux panel + fresh SQLite + administrator login + real MCP bridge + Chromium; no Windows 测试节点/Cloudflare/probe validation",
+  "checks": [
+    "TypeScript and production frontend build passed",
+    "real browser native sidebar link, embedded management page, toggle and refresh persistence",
+    "server list navigation and return",
+    "anonymous login redirect and administrator API 401",
+    "no browser JavaScript errors",
+    "Linux panel build with CGO and genuine frontend passed",
+    "fresh patch, repeat application and conflict refusal passed"
+  ]
+}

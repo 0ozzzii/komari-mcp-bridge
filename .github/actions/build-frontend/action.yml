@@ -1,0 +1,66 @@
+name: Build frontend theme
+description: Clone komari-web, build the default theme, and optionally upload it as an artifact.
+
+inputs:
+  node-version:
+    description: Node.js version used to build komari-web.
+    default: "22"
+  artifact-name:
+    description: Optional artifact name for the packed frontend theme.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install zstd
+      shell: bash
+      run: |
+        set -euxo pipefail
+        if ! command -v zstd >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y zstd
+        fi
+
+    - name: Clone and build pinned frontend with our incremental patches
+      shell: bash
+      env:
+        VITE_KOMARI_AGENT_INSTALL_REF: ${{ env.RELEASE_VERSION || 'main' }}
+        VITE_KOMARI_AGENT_VERSION: ${{ env.RELEASE_VERSION }}
+      run: |
+        set -euo pipefail
+        export VITE_KOMARI_AGENT_REPOSITORY="$(python3 -c 'import json; print(json.load(open("release/config.json"))["distribution_repository"])')"
+        export VITE_KOMARI_IMAGE_REPOSITORY="$(python3 -c 'import json; print(json.load(open("release/config.json"))["container_repository"])')"
+        task_web="$RUNNER_TEMP/komari-release-web"
+        python3 release/prepare.py web "$task_web"
+        cd "$task_web"
+        npm ci --no-audit --no-fund
+        npm run build
+        cd "$GITHUB_WORKSPACE"
+        mkdir -p web/public/defaultTheme
+        test -f "$task_web/dist/index.html"
+        tar -cf "$RUNNER_TEMP/komari-default-dist.tar" -C "$task_web/dist" .
+        zstd -19 -T2 -q -f "$RUNNER_TEMP/komari-default-dist.tar" -o web/public/defaultTheme/dist.tar.zst
+        cp -f "$task_web/komari-theme.json" web/public/defaultTheme/
+        if [ -f "$task_web/preview.png" ]; then cp -f "$task_web/preview.png" web/public/defaultTheme/; fi
+        if [ -f "$task_web/perview.png" ]; then cp -f "$task_web/perview.png" web/public/defaultTheme/; fi
+        if [ -f web/public/defaultTheme/preview.png ] && [ ! -f web/public/defaultTheme/perview.png ]; then cp -f web/public/defaultTheme/preview.png web/public/defaultTheme/perview.png; fi
+        if [ -f web/public/defaultTheme/perview.png ] && [ ! -f web/public/defaultTheme/preview.png ]; then cp -f web/public/defaultTheme/perview.png web/public/defaultTheme/preview.png; fi
+
+    - name: Pack frontend artifact
+      if: ${{ inputs.artifact-name != '' }}
+      shell: bash
+      run: |
+        set -euxo pipefail
+        tar -czf "$RUNNER_TEMP/${{ inputs.artifact-name }}.tar.gz" -C web/public/defaultTheme .
+
+    - name: Upload frontend artifact
+      if: ${{ inputs.artifact-name != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/${{ inputs.artifact-name }}.tar.gz

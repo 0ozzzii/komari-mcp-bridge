@@ -1,0 +1,43 @@
+{
+  "date_utc": "2026-10-05",
+  "date_asia_shanghai": "2026-10-06",
+  "scope": "本地模拟故障回归与实际源码转发器/探针PTY/桥接/官方MCP SDK链路；非生产端到端",
+  "server_base": "202579014bf9670350a673ba91c240174805c9a0",
+  "agent_base": "828afafe7fb5b1b58c1232094e1e46320719016e",
+  "web_base": "0321789bc1989e53df729dfc98bed2a2800c39c6",
+  "go": "1.25.0",
+  "checks": {
+    "panel_changed_packages_race": "passed: terminal, connection, client, mcpbridge; router compiled",
+    "probe_changed_packages_race": "passed: terminal, ws; monitoring/unit, cmd/flags, cmd, monitoring; selected local server tests",
+    "bridge_full_race": "passed, actual daemon binary and stdio integration included",
+    "native_source_chain_race": "passed: 22-second silent command, admin disconnect, PTY reattach, cd/export and exit code 7",
+    "fresh_patch_and_idempotent_prepare": "passed; fresh application and repeat verification; conflicting local overlay refused without overwrite",
+    "external_probe_tests": "TestICMPPing, TestTCPPing, TestHTTPPing failed under cloud network/permission restrictions; no bypass attempted",
+    "monitor_real_dialer_ping_pong": "passed: loopback actual connectWebSocket handlers refresh shortened initial read deadline",
+    "go_vet": "passed: changed panel, probe and local server packages"
+  },
+  "native_chain_fixture_boundaries": [
+    "loopback networking",
+    "fixture node discovery and admin authentication",
+    "fixture terminal event dispatch",
+    "actual panel forwarding and actual probe PTY",
+    "temporary SQLite audit database"
+  ],
+  "artifacts": {
+    "agent_stability_fixed": {
+      "bytes": 8159416,
+      "sha256": "af811c7411583ddadede88757bf843d64731e1ad33e74f2bb3ef22ac0dc4409f"
+    },
+    "server_stability_fixed": {
+      "bytes": 34002240,
+      "sha256": "9102aae9a3caa63d5ea612372012ca49165a06f5c2ef354e16dca0d5cfaf951e"
+    },
+    "bridge": {
+      "bytes": 9109796,
+      "sha256": "bc5ef9d015b2ea145b3a0edeba505beeba5252afbf7a4ddbf42f072204ce0f3f"
+    }
+  },
+  "deployment_executed": false,
+  "online_versions_verified": false,
+  "artifact_build_flags": "Go 1.25.0 linux/amd64 -buildvcs=false -trimpath -ldflags=-s -w; agent CGO_ENABLED=0"
+}

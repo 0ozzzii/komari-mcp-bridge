@@ -1,0 +1,10 @@
+{
+ "name":"MCP 工具接入",
+ "short":"mcp-tools",
+ "description":"仅提供 MCP 管理页的侧栏入口；认证与管理请求由 Komari 原生管理员路由处理。",
+ "author":"0ozzzii",
+ "version":"0.1.0",
+ "entry":"script.js",
+ "permissions":{},
+ "pages":[{"title":"MCP 工具接入","file":"index.html","type":"iframe","visibility":"admin","icon":"Terminal"}]
+}

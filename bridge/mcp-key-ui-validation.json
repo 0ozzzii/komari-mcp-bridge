@@ -1,0 +1,47 @@
+{
+  "validated_at": "2026-10-07T13:24:38.808575+00:00",
+  "scope": "Local Linux loopback; actual built Komari panel with fresh SQLite/admin login, actual bridge daemon, Chromium and official MCP Go SDK. No remote probe, Windows Windows 测试节点, Cloudflare tunnel or real AI product configuration involved.",
+  "results": {
+    "passed": [
+      "all registered nodes including offline nodes displayed",
+      "select all current nodes, clear, individual selection",
+      "create button disabled for empty selection",
+      "native dialog displays full /mcp/<key> URL",
+      "URL-only initialize/tools/list without Authorization header",
+      "14 tools available",
+      "node list restricted to selected nodes",
+      "future node not automatically authorized",
+      "existing URL respects edited node scope",
+      "disabled key rejects same URL with HTTP 401",
+      "dialog close clears plaintext fields",
+      "panel log does not contain URL key",
+      "service toggle persists",
+      "native sidebar and direct route refresh",
+      "navigation to server list and back",
+      "anonymous login redirect and management API 401",
+      "no browser JavaScript errors",
+      "official SDK path and query credential URL integration",
+      "ambiguous credentials rejected before upstream",
+      "upstream URL does not contain key",
+      "access and panic logs redact credential path"
+    ],
+    "pending": [
+      "target AI client configuration",
+      "clipboard API on target HTTPS origin",
+      "Windows build/runtime and existing local compatibility patches",
+      "Windows 测试节点 panel update",
+      "Cloudflare path/auth/cache behavior",
+      "new probe remote terminal execution"
+    ]
+  },
+  "node_policy": {
+    "max_nodes_per_key": 128,
+    "select_all": "snapshot of current registered nodes; no wildcard or future auto-grant"
+  },
+  "authentication": {
+    "default_url": "https://<panel-host>/mcp/<scoped-key>",
+    "compatible": "/mcp with Bearer; /mcp?key=<scoped-key>",
+    "private_daemon": "Bearer only; public panel normalizes URL key",
+    "plaintext": "returned once at creation; dialog close clears DOM values; server stores hash only"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "scope": "Actual Linux loopback panel, fresh SQLite/admin login, bridge and Chromium. Node status uses locally simulated authenticated probe HTTP reports; no production, Windows Windows 测试节点, Cloudflare, external AI or remote probe validation.",
+  "checks": [
+    "server-list weight ordering and stable selection",
+    "ISO and emoji flag assets",
+    "no UUID in node labels",
+    "online/offline filter",
+    "select filtered adds without losing hidden selection",
+    "offline last report timestamp and unknown state",
+    "keys collapsed by default and expandable",
+    "desktop and mobile single page scrollbar",
+    "thin bounded list scrollbar",
+    "dialog visible after scrolling",
+    "all current offline nodes selectable",
+    "clear and individual selection",
+    "native creation dialog with complete credential URL",
+    "URL-only initialize and 14 tools",
+    "scoped node list",
+    "future nodes not automatically granted",
+    "existing URL reflects edited scope",
+    "key disable rejects same URL",
+    "dialog close clears plaintext",
+    "panel log does not contain URL key",
+    "native MCP sidebar visible",
+    "management frame loaded",
+    "toggle enable/disable persisted",
+    "direct route refresh",
+    "server list navigation and return",
+    "anonymous login redirect",
+    "anonymous management API rejected",
+    "no browser JS errors"
+  ],
+  "image": "docs/admin-mcp-node-picker.png",
+  "validated_at": "2026-10-07T16:40:25.126081+00:00",
+  "limitations": [
+    "Last online is the latest received report timestamp, not the exact disconnect instant. No runtime report after a panel restart is displayed as unknown.",
+    "Node state is read when the page loads; reload to refresh it.",
+    "Frontend resources and embedded Go management page both require a new panel binary."
+  ],
+  "reproduction": "python3 dev/validate-mcp-ui.py --panel <built-panel-path>"
+}

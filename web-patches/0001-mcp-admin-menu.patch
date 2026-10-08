@@ -1,0 +1,54 @@
+diff --git a/src/config/menuConfig.json b/src/config/menuConfig.json
+index f66d260..7cfe79b 100644
+--- a/src/config/menuConfig.json
++++ b/src/config/menuConfig.json
+@@ -153,6 +153,11 @@
+         }
+       ]
+     },
++    {
++      "labelKey": "MCP",
++      "path": "/admin/mcp",
++      "icon": "Terminal"
++    },
+     {
+       "labelKey": "common.documentation",
+       "path": "https://komari-document.pages.dev/",
+diff --git a/src/routes.ts b/src/routes.ts
+index d6e3fa9..9bd1661 100644
+--- a/src/routes.ts
++++ b/src/routes.ts
+@@ -59,6 +59,12 @@ export const routes: RouteObject[] = [
+         path: "servers",
+         element: React.createElement(Admin),
+       },
++      {
++        path: "mcp",
++        element: React.createElement(
++          lazy(() => import("./pages/admin/mcp")),
++        ),
++      },
+       {
+         path: "theme_managed",
+         element: React.createElement(
+diff --git a/src/pages/admin/mcp.tsx b/src/pages/admin/mcp.tsx
+new file mode 100644
+index 0000000..6172013
+--- /dev/null
++++ b/src/pages/admin/mcp.tsx
+@@ -0,0 +1,15 @@
++// Keep the existing authenticated admin layout and sidebar. Management requests
++// inside this same-origin frame retain the panel's Cookie and sensitive 2FA flow;
++// no administrator, caller or daemon-control key is embedded in frontend code.
++export default function MCPManagement() {
++  return (
++    <div className="km-page-admin-mcp h-full min-h-[calc(100vh-96px)]">
++      <iframe
++        title="MCP"
++        src="/api/admin/mcp"
++        sandbox="allow-forms allow-same-origin allow-scripts"
++        className="h-full min-h-[calc(100vh-96px)] w-full border-0"
++      />
++    </div>
++  );
++}

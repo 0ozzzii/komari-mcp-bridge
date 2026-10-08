@@ -1,0 +1,76 @@
+diff --git a/terminal/terminal.go b/terminal/terminal.go
+index 2db303f..bc14f11 100644
+--- a/terminal/terminal.go
++++ b/terminal/terminal.go
+@@ -34,8 +34,9 @@ type terminalImpl struct {
+ }
+ 
+ type terminalSession struct {
+-	id   string
+-	term Terminal
++	id    string
++	term  Terminal
++	shell string
+ 
+ 	mu               sync.Mutex
+ 	conn             *websocket.Conn
+@@ -114,12 +115,12 @@ func acquireSessionWithOptions(requestID string, conn *websocket.Conn, options e
+ 		}
+ 		sessionsMu.Unlock()
+ 
+-		impl, err := newTerminalImpl()
++		impl, err := newTerminalImpl(options.Managed)
+ 		if err != nil {
+ 			release()
+ 			return nil, false, err
+ 		}
+-		session = &terminalSession{id: requestID, term: impl.term, options: options, release: release}
++		session = &terminalSession{id: requestID, term: impl.term, shell: impl.shell, options: options, release: release}
+ 
+ 		sessionsMu.Lock()
+ 		if sessions[requestID] != nil {
+diff --git a/terminal/terminal_unix.go b/terminal/terminal_unix.go
+index 9f8ffb4..b6928b8 100644
+--- a/terminal/terminal_unix.go
++++ b/terminal/terminal_unix.go
+@@ -17,7 +17,7 @@ import (
+ // newTerminalImpl 创建一个新的终端实例。
+ // 它会尝试根据用户配置文件查找默认 shell，如果失败则回退到常见 shell。
+ // 优先以交互模式启动 shell，如果不支持则回退到非交互模式。
+-func newTerminalImpl() (*terminalImpl, error) {
++func newTerminalImpl(managed ...bool) (*terminalImpl, error) {
+ 	shell := ""
+ 	// 从 /etc/passwd 获取用户默认 shell
+ 	userHomeDir, err := os.UserHomeDir() // 获取当前用户的主目录
+diff --git a/terminal/terminal_windows.go b/terminal/terminal_windows.go
+--- a/terminal/terminal_windows.go
++++ b/terminal/terminal_windows.go
+@@ -13,14 +13,11 @@ import (
+ 	"github.com/UserExistsError/conpty"
+ )
+ 
+-func newTerminalImpl() (*terminalImpl, error) {
+-	// 查找 shell
+-	shell, err := exec.LookPath("powershell.exe")
+-	if err != nil || shell == "" {
+-		shell = "cmd.exe"
+-	}
+-	if shell == "" {
+-		return nil, fmt.Errorf("no supported shell found")
++func newTerminalImpl(managed ...bool) (*terminalImpl, error) {
++	isManaged := len(managed) > 0 && managed[0]
++	shell, err := selectWindowsShell(isManaged, exec.LookPath, os.Getenv("ProgramFiles"))
++	if err != nil {
++		return nil, err
+ 	}
+ 
+ 	// 获取工作目录
+@@ -29,7 +26,7 @@ func newTerminalImpl() (*terminalImpl, error) {
+ 	}
+ 
+ 	// 启动 ConPTY
+-	tty, err := conpty.Start(shell, conpty.ConPtyWorkDir(workingDir))
++	tty, err := conpty.Start(windowsShellCommandLine(shell, isManaged), conpty.ConPtyWorkDir(workingDir))
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to start conpty: %v", err)
+ 	}

@@ -1,0 +1,40 @@
+diff --git a/src/pages/admin/mcp.tsx b/src/pages/admin/mcp.tsx
+index 6172013..214cc7b 100644
+--- a/src/pages/admin/mcp.tsx
++++ b/src/pages/admin/mcp.tsx
+@@ -1,14 +1,30 @@
+-// Keep the existing authenticated admin layout and sidebar. Management requests
+-// inside this same-origin frame retain the panel's Cookie and sensitive 2FA flow;
+-// no administrator, caller or daemon-control key is embedded in frontend code.
++import { useCallback, useEffect, useRef, useState } from "react";
++
++// Keep official authentication and sidebar while letting the native admin
++// container own page scrolling. Only bounded node lists/dialogs scroll inside.
+ export default function MCPManagement() {
++  const [height, setHeight] = useState(500);
++  const observer = useRef<ResizeObserver | null>(null);
++  const fit = useCallback((frame: HTMLIFrameElement) => {
++    observer.current?.disconnect();
++    const doc = frame.contentDocument;
++    if (!doc?.body) return;
++    doc.documentElement.style.overflow = "hidden";
++    const update = () => setHeight(Math.ceil(doc.body.getBoundingClientRect().height));
++    observer.current = new ResizeObserver(update);
++    observer.current.observe(doc.body);
++    update();
++  }, []);
++  useEffect(() => () => observer.current?.disconnect(), []);
+   return (
+-    <div className="km-page-admin-mcp h-full min-h-[calc(100vh-96px)]">
++    <div className="km-page-admin-mcp w-full">
+       <iframe
+         title="MCP"
+         src="/api/admin/mcp"
+         sandbox="allow-forms allow-same-origin allow-scripts"
+-        className="h-full min-h-[calc(100vh-96px)] w-full border-0"
++        className="block w-full border-0"
++        style={{ height }}
++        onLoad={(event) => fit(event.currentTarget)}
+       />
+     </div>
+   );
