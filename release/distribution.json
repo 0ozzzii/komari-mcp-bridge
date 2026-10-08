@@ -1,6 +1,6 @@
 {
   "source_repository": "0ozzzii/komari-mcp-bridge-dev",
-  "source_commit": "71224e729416c1878a01b65729f870fdb5a63a43",
+  "source_commit": "07f140c5081689f2f4bb574b5b448cf00b43cc79",
   "distribution_repository": "0ozzzii/komari-mcp-bridge",
   "export_mode": "sanitized immutable source snapshot; private history excluded",
   "excluded_paths": [
@@ -393,7 +393,7 @@
     "release/download.sh": "f34d9822a169b296836429f03a8ecab1fbbfef29bdbbd798d3ce2f12a97bc342",
     "release/manifest.py": "dac946177e63f12fd3bd3487d6d6ab9f3db59b05799852562d0221135a3088d3",
     "release/merge-ai-review.py": "d5321a4998811cb195d0c8ec5ba41b1a382fdb886b3cf5c0678dd1e021801304",
-    "release/notify-failure.py": "047a14951fb0b9c2e4ca1b2ab2488e8041bdecfeab8105bf6f883d45f7295cbe",
+    "release/notify-failure.py": "877a89caa21c2d4f7d2bfe5ae915ce4f55a1920765f81426d1f6e028014aacdd",
     "release/notify-review.py": "2e3f2fe026d1827e2c63c5ee2f3912663583102751d1a40cfd7f09b71048b840",
     "release/platform-terminal-notes.md": "f389bc3013413d93157a046ea03dca71114609d415a38315b76b1a3a2138be8a",
     "release/prepare.py": "aeb712cf40c55d7c081a6aaa6c1c4a54095c6ebd2c59d3fe30197565293f45fd",
