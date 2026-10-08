@@ -1,6 +1,6 @@
 {
   "source_repository": "0ozzzii/komari-mcp-bridge-dev",
-  "source_commit": "9c35bd1145328b360340fc52c41f631f8efa3cb8",
+  "source_commit": "62654f1a9fdbc41f65e30df07c84b15802a9127f",
   "distribution_repository": "0ozzzii/komari-mcp-bridge",
   "export_mode": "sanitized immutable source snapshot; private history excluded",
   "excluded_paths": [
@@ -378,7 +378,7 @@
     "protocol/v2/jsonrpc.go": "1e66fdf9bc5a084f4c800639ab5f12389ae81e9378a58c72909d7f4c349d6e0c",
     "protocol/v2/networktest.go": "2fcd38f2af5672b2b0ff5cf8c800bf519764cd506bb9b2373206c8d599daa1a2",
     "protocol/v2/networktest_test.go": "986e14f78604431a4c7ea6ab6dca94fc3ac1a1c13028578caaedb67777889053",
-    "release/AI_REVIEW_SETUP.zh-CN.md": "8e69e5a5b51712f64e6d2b1f68e54feef576dea61016ae2cc520bd3c0c0b5b2d",
+    "release/AI_REVIEW_SETUP.zh-CN.md": "c218728e630a4fdde83df4ecafb610876bcf929951a6041b4133ca7c280cc63c",
     "release/PUBLIC_DISTRIBUTION.md": "e396160ec67f58305a497b2f29b0adbab3b9ca4a9ecdbe69473b630c4fc5b814",
     "release/PUBLIC_SYNC.zh-CN.md": "d6209c5a4d2db57c631f514bdd5bfc5d63440ffc3b44fdea36fdbab78a86b34c",
     "release/README.md": "ec6787ffef81e4ddf621db3bf73782caade8c770c96b5d56159e2643d39bce66",

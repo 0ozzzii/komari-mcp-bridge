@@ -45,6 +45,19 @@
 
 当前接口要求 **OpenAI Chat Completions 兼容协议**，脚本会在 base URL 后追加 `/chat/completions`。例如实际请求地址为 `https://api.example.com/v1/chat/completions`，BASE_URL 应填 `https://api.example.com/v1`。供应商若用其他兼容基路径，填它文档要求的基路径；不要重复追加 `/chat/completions`。必须是 HTTPS，不把 Key 放进 URL，也不跟随重定向发送凭据。仅支持原生 Anthropic/Gemini/Responses 等其他协议的地址不能直接假装兼容。
 
+### 商汤日日新与 OpenRouter
+
+继续使用上述 Chat Completions 协议，不需要另加协议变量。按自己的套餐与官方调用示例选择 **API 基地址**，不能把网页登录／控制台地址填进 BASE_URL。
+
+| 接入方 | BASE_URL | 说明 |
+| --- | --- | --- |
+| 商汤中国内地 Token 套餐兼容入口 | `https://token.sensenova.cn/v1` | 官方 Skills 的中文说明及 Chat Completions 适配器使用此入口；其他商业套餐／网关必须以其调用示例为准 |
+| OpenRouter | `https://openrouter.ai/api/v1` | 官方快速入门使用 `/api/v1/chat/completions`；已通过的备用配置无需改协议 |
+
+MODEL 填提供商 API 中准确的模型 ID，不能只凭网页展示名推断；指定 DeepSeek-V4 Flash 时仍须确认该套餐授权与对应 ID，不自动替换成别的模型。HTTP 200 加 HTML 不代表模型可用，应先核对 BASE_URL／网关返回，再重跑联测。
+
+依据：[商汤官方中文说明](https://github.com/OpenSenseNova/SenseNova-Skills/blob/5abde96fed2148aaf6a0ed55f0f4708f2b0845f5/README_CN.md)、[官方兼容适配器](https://github.com/OpenSenseNova/SenseNova-Skills/blob/5abde96fed2148aaf6a0ed55f0f4708f2b0845f5/skills/sn-image-base/scripts/sn_image_base/llm/chat_completions_adapter.py)、[OpenRouter 官方快速入门](https://github.com/OpenRouterTeam/docs/blob/206e03049edbea316df7b44301b4deb31694be17/quickstart.mdx)。这些公开说明不能替代用户账号的模型授权和实际测试。
+
 主模型有效拒绝或表示不确定时，不会用备用模型推翻结论。只有主接口技术故障、429限流、超时等情况，才有限重试并切备用；主备不并发请求。
 
 `UPSTREAM_REVIEWER_LOGINS`、`UPSTREAM_REVIEW_WEBHOOK_URL` 和 `UPSTREAM_REVIEW_WEBHOOK_TOKEN` 是另一条外部 GitHub 审核身份路线的可选项。只使用本教程的内置主备 API 审核时，不用配置它们。
