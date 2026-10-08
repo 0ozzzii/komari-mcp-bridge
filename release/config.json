@@ -1,6 +1,6 @@
 {
-  "repository": "0ozzzii/komari-mcp-bridge",
-  "distribution_repository": "0ozzzii/komari-mcp-bridge-release",
+  "repository": "0ozzzii/komari-mcp-bridge-dev",
+  "distribution_repository": "0ozzzii/komari-mcp-bridge",
   "container_repository": "ghcr.io/0ozzzii/komari-mcp-bridge",
   "go_version": "1.25.0",
   "node_version": "22",

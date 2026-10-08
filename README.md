@@ -2,9 +2,11 @@
 
 基于 [Komari](https://github.com/komari-monitor/komari)、[Komari Agent](https://github.com/komari-monitor/komari-agent) 和 [Komari Web](https://github.com/komari-monitor/komari-web) 的独立维护版本。保留原监控面板和探针，在原后台增加 **MCP** 页面，让 AI 客户端直接使用已有远程终端与文件通道。
 
+私有开发与模型审核配置在 [komari-mcp-bridge-dev](https://github.com/0ozzzii/komari-mcp-bridge-dev)；脱敏源码、安装脚本和成品在公开 [komari-mcp-bridge](https://github.com/0ozzzii/komari-mcp-bridge)。Go 模块路径与既有 GHCR 镜像保持原名，不随着私有仓库改名迁移。
+
 **这是本仓库的适配版本，不是 Komari 官方发行版。** 上游项目、作者和第三方依赖的署名与许可保留；我们的修改范围、来源和许可说明见 [ATTRIBUTION.md](ATTRIBUTION.md)。问题请提交到 [本仓库 Issues](https://github.com/0ozzzii/komari-mcp-bridge/issues)，不要把本版特有问题归因于官方。
 
-[下载最新正式版](https://github.com/0ozzzii/komari-mcp-bridge-release/releases/latest) · [安装与更新](release/README.md) · [MCP 工具与配置](bridge/README.md) · [执行保护](bridge/EXECUTION_POLICY.md) · [日志与排障](bridge/DIAGNOSTICS.md)
+[下载最新正式版](https://github.com/0ozzzii/komari-mcp-bridge/releases/latest) · [安装与更新](release/README.md) · [MCP 工具与配置](bridge/README.md) · [执行保护](bridge/EXECUTION_POLICY.md) · [日志与排障](bridge/DIAGNOSTICS.md)
 
 ## 我们增加和优化了什么
 
@@ -39,7 +41,7 @@ AI 客户端
 
 ## 安装本版本
 
-公开成品就绪后，从 [分发仓库 Release](https://github.com/0ozzzii/komari-mcp-bridge-release/releases/latest) 下载，**部署设备无需拉源码编译**。安装方式与官方保持一致，源码构建用于开发与 CI。私有开发库和公开分发库已分离；仓库存在不代表附件已发布，具体边界见 [分发说明](release/PUBLIC_DISTRIBUTION.md)。
+公开成品就绪后，从 [分发仓库 Release](https://github.com/0ozzzii/komari-mcp-bridge/releases/latest) 下载，**部署设备无需拉源码编译**。安装方式与官方保持一致，源码构建用于开发与 CI。私有开发库和公开分发库已分离；仓库存在不代表附件已发布，具体边界见 [分发说明](release/PUBLIC_DISTRIBUTION.md)。
 
 | 组件 | 成品和作用 |
 | --- | --- |

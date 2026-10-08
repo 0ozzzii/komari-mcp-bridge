@@ -2,7 +2,7 @@
 
 目标：弄清实际 Shell、ConPTY 字节流行为、PowerShell 持续作用域和退出码语义。不要只验证 WebSocket 返回 101，也不要将 command_run 超时报成命令失败或擅自重新派发命令。
 
-开发侧已获得的证据：真实 Windows GitHub CI 的 ConPTY 会丢弃原始 READY 标记两侧的 0x1E/0x1F，虽然屏幕显示 KMB:...:READY:PID，原字节解析器仍无法识别。候选修复位于 PR https://github.com/0ozzzii/komari-mcp-bridge/pull/5，使用 Windows 专用可打印标记与匹配探针的 marker_protocol 协商；尚不能据此推断 Windows 测试节点 Build 17763 的实际行为。本轮不要把候选分支安装到现有服务，仍以探测为目的。
+开发侧已获得的证据：真实 Windows GitHub CI 的 ConPTY 会丢弃原始 READY 标记两侧的 0x1E/0x1F，虽然屏幕显示 KMB:...:READY:PID，原字节解析器仍无法识别。候选修复位于 PR https://github.com/0ozzzii/komari-mcp-bridge-dev/pull/5，使用 Windows 专用可打印标记与匹配探针的 marker_protocol 协商；尚不能据此推断 Windows 测试节点 Build 17763 的实际行为。本轮不要把候选分支安装到现有服务，仍以探测为目的。
 
 优先使用已通过 Windows CI 的诊断附件（分别测试 powershell.exe 和已安装的 pwsh.exe）：在 PR #5 对应的最新成功 Build and validate 工作流里，下载 komari-windows-conpty-probe artifact。它包含独立诊断 exe、sha256sums.txt、source-commit.txt；不是服务安装包，不连接真实面板，不含真实节点凭据。在新临时目录解压，核对来源提交与 SHA256 后运行：
 & .\komari-conpty-probe-windows-amd64.exe -test.run '^TestWindowsConPTYPowerShellPersistentProtocol$' -test.v -test.timeout 90s

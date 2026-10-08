@@ -1,6 +1,6 @@
 # 跨平台终端兼容记录
 
-调研日期：2026-10-08。候选代码见 [PR #5](https://github.com/0ozzzii/komari-mcp-bridge/pull/5)。v1.0.1 不含这批修复；本记录不表示生产服务已经更新。
+调研日期：2026-10-08。候选代码见 [PR #5](https://github.com/0ozzzii/komari-mcp-bridge-dev/pull/5)。v1.0.1 不含这批修复；本记录不表示生产服务已经更新。
 
 发布复核曾在冷启动的 Windows PowerShell5.1 上发现单次初始化输入未返回 READY（原生 CI，PowerShell7 同次通过）。ConPTY 创建和探针 ACK 不能证明 Shell 已开始接受输入。桥接因此仅对首次 Windows 初始化的幂等设置／READY 探测按1秒间隔、有就绪期限地重试；收到 READY、连接变化或会话状态变化即停止。业务命令、分块脚本和断线恢复均不走此重试路径。迟到／重复 READY 不能覆盖运行中或重连后的上下文状态。原生测试使用同一初始化等待逻辑，冷启动预算与桥接默认60秒一致，不承诺所有机器都在1～3秒内就绪。
 

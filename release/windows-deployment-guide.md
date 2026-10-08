@@ -9,7 +9,7 @@
 - 使用已验证的 Windows 服务托管方式；控制台 exe 不能仅靠 `sc create` 自动实现 SCM 协议。
 - 下载同版预构建成品、`release.json`、`sha256sums.txt`，不要求目标安装 Go／Node。
 
-开发仓库为 `0ozzzii/komari-mcp-bridge`，公开分发仓库为 `0ozzzii/komari-mcp-bridge-release`。从分发仓库解析 latest 的实际 tag，再从同一固定 tag 下载整组文件。仓库存在不代表 Release 附件已发布；缺少成品就保留原服务，不下载官方原版冒充本版本。
+开发仓库为 `0ozzzii/komari-mcp-bridge-dev`，公开分发仓库为 `0ozzzii/komari-mcp-bridge`。从分发仓库解析 latest 的实际 tag，再从同一固定 tag 下载整组文件。仓库存在不代表 Release 附件已发布；缺少成品就保留原服务，不下载官方原版冒充本版本。
 
 Windows x64 下载 `komari-windows-amd64.exe`、`komari-mcp-windows-amd64.exe`；其他架构按实际选择。用 `Get-FileHash -Algorithm SHA256` 校验后才切换。升级前备份程序、服务定义、配置、桥接 state 和一致性数据库备份，保护 NTFS ACL，不盲目降级数据库。
 

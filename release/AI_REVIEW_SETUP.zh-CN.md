@@ -1,6 +1,6 @@
 # GitHub 主备 AI 审核配置教程
 
-适用仓库：[0ozzzii/komari-mcp-bridge](https://github.com/0ozzzii/komari-mcp-bridge)。本教程按仓库实际的 `ai-review.yml`、`sync-upstream.yml` 和审核脚本编写。
+适用仓库：[0ozzzii/komari-mcp-bridge-dev](https://github.com/0ozzzii/komari-mcp-bridge-dev)。本教程按仓库实际的 `ai-review.yml`、`sync-upstream.yml` 和审核脚本编写。
 
 审核 Agent 运行在 GitHub Actions：每天北京时间中午12:00检查官方更新，有更新才创建候选 PR、运行完整 CI，再调用模型审核。GitHub 可能延迟调度。没有更新就不需要调用模型。模型审核通过且开启自动合并后，代码可合入 main；**合并不会自动发布 Release，也不会替你更新服务器。**
 
@@ -72,7 +72,7 @@
 5. 查看运行结果：没有官方更新就不会产生新 PR；有冲突会保留 draft，先交给开发 Agent 修复；已有同步 PR 时不会覆盖它。
 6. 有正常同步候选后，等它的 **Build and validate** 全部通过；内置模型审核会按工作流自动触发。
 7. 打开 **Review upstream candidate with primary and backup models** 的对应运行，在 **Artifacts** 下载 `upstream-ai-review`，查看审核 JSON 中的 decision、供应商选择、调用失败类型和 findings。材料必须对应当前完整 head SHA。
-8. 需要手动重审时，打开该审核工作流 → **Run workflow** →选择 **main**，填写同步 PR 当前的完整40位 **head_sha**。可让本地 Agent 执行 `gh pr view <同步PR编号> --repo 0ozzzii/komari-mcp-bridge --json headRefOid --jq .headRefOid` 获取；不要填 main SHA、短 SHA 或过期提交。
+8. 需要手动重审时，打开该审核工作流 → **Run workflow** →选择 **main**，填写同步 PR 当前的完整40位 **head_sha**。可让本地 Agent 执行 `gh pr view <同步PR编号> --repo 0ozzzii/komari-mcp-bridge-dev --json headRefOid --jq .headRefOid` 获取；不要填 main SHA、短 SHA 或过期提交。
 9. 确认真实 API 能返回有效结果，故障通知也符合预期后，把 `UPSTREAM_AI_AUTOMERGE` 改为 `true`。若当前候选已有 approve，可针对相同且未变化的完整 SHA 手动重审以触发合并检查。
 
 这是专门审核机器人创建的 `upstream/official-sync-*` 同步 PR 的流程，不是任意开发 PR 的通用模型调用入口。不要拿普通开发 PR #5 当作该模型配置的有效验收；脚本会拒绝不符合身份／分支规则的候选。

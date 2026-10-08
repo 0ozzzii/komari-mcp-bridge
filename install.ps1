@@ -14,7 +14,7 @@ $ServiceName = "komari-agent"
 $GitHubProxy = ""
 $KomariArgs = @()
 $InstallVersion = ""
-$ReleaseRepository = if ($env:KOMARI_RELEASE_REPOSITORY) { $env:KOMARI_RELEASE_REPOSITORY } else { '0ozzzii/komari-mcp-bridge-release' }
+$ReleaseRepository = if ($env:KOMARI_RELEASE_REPOSITORY) { $env:KOMARI_RELEASE_REPOSITORY } else { '0ozzzii/komari-mcp-bridge' }
 if ($ReleaseRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
     throw 'Invalid KOMARI_RELEASE_REPOSITORY; expected owner/repository'
 }

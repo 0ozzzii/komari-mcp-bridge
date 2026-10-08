@@ -2,17 +2,17 @@
 
 本项目保留 Komari 的面板、探针主动回连、终端中继与服务管理方式；新增常驻 MCP 桥接、原后台 MCP 菜单、权限管理及探针资源/连接优化。编译发生在 GitHub Actions，正式部署设备下载成品或拉镜像，不必安装 Go、Node、Zig，也不必拉源码现场构建。
 
-默认从 [最新正式版（latest）](https://github.com/0ozzzii/komari-mcp-bridge-release/releases/latest) 下载成品，或使用本项目三个组件的 `:latest` 镜像。GitHub 的 latest 是入口，实际发行版仍有固定版本号；部署时先解析并记录实际 tag，再从同一 tag 下载程序与校验文件，避免发布切换时混用版本。旧版本与快照保留在 [Releases](https://github.com/0ozzzii/komari-mcp-bridge-release/releases)，回退时指定原 tag。
+默认从 [最新正式版（latest）](https://github.com/0ozzzii/komari-mcp-bridge/releases/latest) 下载成品，或使用本项目三个组件的 `:latest` 镜像。GitHub 的 latest 是入口，实际发行版仍有固定版本号；部署时先解析并记录实际 tag，再从同一 tag 下载程序与校验文件，避免发布切换时混用版本。旧版本与快照保留在 [Releases](https://github.com/0ozzzii/komari-mcp-bridge/releases)，回退时指定原 tag。
 
 **只有发布工作流成功并上传完整附件后，成品才可安装。** 不把本地 `Snapshot-local-validation` 或构建缓存当作正式发行版；最新代码合并也不等于已发布新的 latest。
 
-开发与公开分发仓库已分离，安装来源可配置。源码、Git 历史、镜像和 Release 附件需要分别检查，见 [公开分发说明](PUBLIC_DISTRIBUTION.md)。本轮不新增自动镜像推送流程。
+私有开发库为 `0ozzzii/komari-mcp-bridge-dev`，公开分发库为 `0ozzzii/komari-mcp-bridge`。安装来源可配置，审核密钥只在 dev 配置。源码、Git 历史、镜像和 Release 附件分别检查，见[公开分发说明](PUBLIC_DISTRIBUTION.md)与[同步教程](https://github.com/0ozzzii/komari-mcp-bridge/blob/main/release/PUBLIC_SYNC.zh-CN.md)。本轮不新增自动推送工作流。
 
 ## 入口与官方保持一致
 
 | 项目 | 官方习惯 | 本项目 |
 | --- | --- | --- |
-| 面板二进制 | GitHub Release，`komari-<os>-<arch>[.exe]` | 相同命名，公开分发源 `0ozzzii/komari-mcp-bridge-release` |
+| 面板二进制 | GitHub Release，`komari-<os>-<arch>[.exe]` | 相同命名，公开分发源 `0ozzzii/komari-mcp-bridge` |
 | 探针二进制 | Release，`komari-agent-<os>-<arch>[.exe]` | 相同命名，包含资源统计、连接、执行保护及 Windows Shell 适配 |
 | Linux 探针安装 | 面板生成命令，下载 `install.sh`，安装并注册服务 | 保留参数/安装目录/服务模型，脚本和下载源都指向本仓库 |
 | Windows 探针安装 | `install.ps1` 下载 exe，NSSM 托管 | 保留官方模型，先核对 SHA256，再处理原服务 |
@@ -39,21 +39,21 @@ GitHub `release.published` 事件沿用官方流程。若某个构建/上传失�
 
 普通安装无需手填版本：Linux 安装器未指定版本时、Windows 安装器未指定 `--install-version` 时，均解析本仓库 GitHub `releases/latest`。Linux 面板安装菜单选择正式版；探针继续使用面板生成的安装命令。面板、探针、桥接的手动下载入口同样是上面的最新正式版页面。
 
-单个最新成品也可使用 `https://github.com/0ozzzii/komari-mcp-bridge-release/releases/latest/download/<官方兼容文件名>`。实际安装请先解析固定 tag，再按以下地址下载整组程序和校验文件。容器初次部署可用 `:latest`，升级时记录实际镜像 digest，固定 tag/digest 用于回退；已有容器不会因为标签变化自动重新启动。
+单个最新成品也可使用 `https://github.com/0ozzzii/komari-mcp-bridge/releases/latest/download/<官方兼容文件名>`。实际安装请先解析固定 tag，再按以下地址下载整组程序和校验文件。容器初次部署可用 `:latest`，升级时记录实际镜像 digest，固定 tag/digest 用于回退；已有容器不会因为标签变化自动重新启动。
 
 面板、探针、桥接都使用：
 
 ```text
-https://github.com/0ozzzii/komari-mcp-bridge-release/releases/download/<TAG>/<官方兼容文件名>
-https://github.com/0ozzzii/komari-mcp-bridge-release/releases/download/<TAG>/sha256sums.txt
+https://github.com/0ozzzii/komari-mcp-bridge/releases/download/<TAG>/<官方兼容文件名>
+https://github.com/0ozzzii/komari-mcp-bridge/releases/download/<TAG>/sha256sums.txt
 ```
 
 安装脚本可从**已确认 tag**的 raw 路径下载：
 
 ```text
-https://raw.githubusercontent.com/0ozzzii/komari-mcp-bridge-release/<TAG>/install-komari.sh
-https://raw.githubusercontent.com/0ozzzii/komari-mcp-bridge-release/<TAG>/install.sh
-https://raw.githubusercontent.com/0ozzzii/komari-mcp-bridge-release/<TAG>/install.ps1
+https://raw.githubusercontent.com/0ozzzii/komari-mcp-bridge/<TAG>/install-komari.sh
+https://raw.githubusercontent.com/0ozzzii/komari-mcp-bridge/<TAG>/install.sh
+https://raw.githubusercontent.com/0ozzzii/komari-mcp-bridge/<TAG>/install.ps1
 ```
 
 面板 Release 内的前端自动使用该构建 commit 的脚本和该 tag 的探针/镜像。三处安装对话框均来自 `agentRelease.ts`，不再混用官方仓库链接。Linux 探针保留 `--install-dir`、`--install-service-name`、`--install-version`、`--install-ghproxy`、`--install-no-mirror` 等参数；节点 Client Token 仍由本面板生成，不能用 MCP Key 替代。

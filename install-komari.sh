@@ -2,7 +2,7 @@
 # BEGIN KOMARI RELEASE DOWNLOAD
 # Embedded verbatim into the official-derived installers by render-installers.py.
 # No secret is sent to GitHub; Client Tokens are only passed to the agent.
-komari_release_repository=${KOMARI_RELEASE_REPOSITORY:-0ozzzii/komari-mcp-bridge-release}
+komari_release_repository=${KOMARI_RELEASE_REPOSITORY:-0ozzzii/komari-mcp-bridge}
 printf '%s\n' "$komari_release_repository" | LC_ALL=C grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || {
     echo 'Invalid KOMARI_RELEASE_REPOSITORY; expected owner/repository' >&2
     exit 1

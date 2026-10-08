@@ -1,11 +1,11 @@
 # 给部署 Agent：更新面板、MCP 桥接与 Windows／Android 探针
 
-你负责把当前已部署的 Komari MCP 定制版本更新到本项目的 **v1.0.2**，并在用户指定的 Windows 与 Android／Termux 节点上验证跨平台终端。仅操作本次明确选定的面板、配套桥接及这两个节点的 Komari Agent。不要更新其他探针、清理业务程序或借机修改系统配置。
+你负责把当前已部署的 Komari MCP 定制版本更新到本项目的 **v1.0.3**，并在用户指定的 Windows 与 Android／Termux 节点上验证跨平台终端。仅操作本次明确选定的面板、配套桥接及这两个节点的 Komari Agent。不要更新其他探针、清理业务程序或借机修改系统配置。
 
 ## 目标与边界
 
-- 开发仓库：`https://github.com/0ozzzii/komari-mcp-bridge`；公开分发仓库：`https://github.com/0ozzzii/komari-mcp-bridge-release`。使用本项目正式 Release，不能下载官方原版冒充带 MCP 优化的版本。
-- 本次配套固定版本：**v1.0.2**。先确认 Release 工作流成功、附件完整，再更新。尚未发布／文件不全时只做独立准备，不停原服务，不在目标设备现场编译。
+- 开发仓库：`https://github.com/0ozzzii/komari-mcp-bridge-dev`；公开分发仓库：`https://github.com/0ozzzii/komari-mcp-bridge`。使用本项目正式 Release，不能下载官方原版冒充带 MCP 优化的版本。
+- 本次配套固定版本：**v1.0.3**。先确认 Release 工作流成功、附件完整，再更新。尚未发布／文件不全时只做独立准备，不停原服务，不在目标设备现场编译。
 - 执行前确认用户已授权更新选定面板、桥接和目标探针，以及切换时必要的短暂重启。先备份并确保有独立控制途径；不批量处理其他设备。
 - 沿用各自真实 endpoint、Client Token、节点身份、安装目录、服务名、运行用户、既有启动参数与日志托管方式。不新建重复节点，不把调用方 MCP Key 或管理员 API Key 当探针 Token。
 - 不改 Cloudflare Tunnel／Access、域名、Nginx／Caddy、监听端口、防火墙、2FA、系统执行策略、PowerShell Profile、系统 PATH 或其他自启动项。不新增 SSH 中继；沿用已有可用的 HTTPS 直连接入方式。
@@ -26,12 +26,12 @@
 
 ## 2. 从正式 Release 下载预构建成品
 
-打开 `https://github.com/0ozzzii/komari-mcp-bridge-release/releases/tag/v1.0.2`；查看对应 **Official-aligned release binaries and images** 工作流必须完整成功。读取同版 `release.json` 和 `sha256sums.txt`，确认来源完整 commit，不能只看网页标题“latest”。整次更新固定这个 tag，不在每个文件下载时重新解析 latest。
+打开 `https://github.com/0ozzzii/komari-mcp-bridge/releases/tag/v1.0.3`；该工作流运行在私有开发库，能访问时确认 **Official-aligned release binaries and images** 完整成功；不能访问时按公开附件、来源和校验值验证，不声称看过私有 CI。读取同版 `release.json` 和 `sha256sums.txt`，确认来源完整 commit，不能只看网页标题“latest”。整次更新固定这个 tag，不在每个文件下载时重新解析 latest。
 
 下载地址格式：
 
 ```text
-https://github.com/0ozzzii/komari-mcp-bridge-release/releases/download/v1.0.2/<文件名>
+https://github.com/0ozzzii/komari-mcp-bridge/releases/download/v1.0.3/<文件名>
 ```
 
 | 目标 | 需下载的成品 |
@@ -40,7 +40,7 @@ https://github.com/0ozzzii/komari-mcp-bridge-release/releases/download/v1.0.2/<�
 | Android ARM64 的 Android 节点 探针 | 仅在实际为 ARM64、原探针确实运行 Linux ARM64 成品时，使用 `komari-agent-linux-arm64`；其他架构按实际选择 |
 | Linux x64 原生面板／桥接 | `komari-linux-amd64`、`komari-mcp-linux-amd64` |
 | Windows x64 原生面板／桥接 | `komari-windows-amd64.exe`、`komari-mcp-windows-amd64.exe` |
-| Docker 面板／桥接 | `ghcr.io/0ozzzii/komari-mcp-bridge:v1.0.2` 和 `ghcr.io/0ozzzii/komari-mcp-bridge-mcp:v1.0.2`，记录实际 digest |
+| Docker 面板／桥接 | `ghcr.io/0ozzzii/komari-mcp-bridge:v1.0.3` 和 `ghcr.io/0ozzzii/komari-mcp-bridge-mcp:v1.0.3`，记录实际 digest |
 
 Android通常 `uname` 返回 Linux，但这不是二进制兼容性证明。核对旧探针实际格式、架构、权限及运行方式；在独立目录校验新文件并尝试无网络控制副作用的 `--help`。如果新成品不能运行，保留旧探针并报告真实错误，不安装 Go、不改系统库、不静默换官方旧版。
 
@@ -84,4 +84,4 @@ Android 节点按实际的Android启动管理方式切换：可能是原生Andro
 
 最终按表返回：组件／设备、更新前后版本与PID、实际文件路径和Shell、校验结果、重启范围、验收项目及证据、失败／未验证项、备份与日志位置、可执行回滚步骤。不要只写“全部正常”；Android真机和Windows 节点结果分别列出，明确保留期内重连是尽力恢复、未收到的日志无法凭空补回。
 
-参考：[发布说明](https://github.com/0ozzzii/komari-mcp-bridge-release/blob/v1.0.2/release/README.md)、[跨平台兼容记录](https://github.com/0ozzzii/komari-mcp-bridge-release/blob/v1.0.2/release/platform-terminal-notes.md)、[审核API配置教程](AI_REVIEW_SETUP.zh-CN.md)。
+参考：[发布说明](https://github.com/0ozzzii/komari-mcp-bridge/blob/v1.0.3/release/README.md)、[跨平台兼容记录](https://github.com/0ozzzii/komari-mcp-bridge/blob/v1.0.3/release/platform-terminal-notes.md)、[审核API配置教程](AI_REVIEW_SETUP.zh-CN.md)。

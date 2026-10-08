@@ -125,7 +125,7 @@ index 0000000..3b76b70
 +++ b/src/config/agentRelease.ts
 @@ -0,0 +1,12 @@
 +// Build-time release identity: one source for all installation dialogs.
-+const repository = import.meta.env.VITE_KOMARI_AGENT_REPOSITORY || "0ozzzii/komari-mcp-bridge-release";
++const repository = import.meta.env.VITE_KOMARI_AGENT_REPOSITORY || "0ozzzii/komari-mcp-bridge";
 +const installRef = import.meta.env.VITE_KOMARI_AGENT_INSTALL_REF || "main";
 +const version = import.meta.env.VITE_KOMARI_AGENT_VERSION || "";
 +const imageRepository = import.meta.env.VITE_KOMARI_IMAGE_REPOSITORY || "ghcr.io/0ozzzii/komari-mcp-bridge";
