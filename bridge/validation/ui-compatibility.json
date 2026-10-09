@@ -13,7 +13,8 @@
     "bridge build version and commit exposed in capabilities",
     "custom header and public release source; source-only releases excluded",
     "anonymous requests rejected and credentials absent from access logs",
-    "local sh/bash/mksh bootstrap and persistent cd/export"
+    "local sh/bash/mksh bootstrap and persistent cd/export",
+    "one-axis overflow and important priorities preserved after all modal close methods; real wheel scrolling, rapid modal handoff, iframe removal and native SPA navigation"
   ],
   "not_verified": [
     "Android device bootstrap failure: prompt visible but no READY; local shell-family fixtures did not reproduce it",

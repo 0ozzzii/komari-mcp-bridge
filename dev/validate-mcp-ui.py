@@ -126,6 +126,16 @@ try:
         # Check the actual sidebar link's preceding text in visual order.
         frame=page.frame_locator('iframe[title="MCP"]')
         frame.get_by_role('heading',name='MCP 工具接入',exact=True).wait_for(state='visible')
+        # Preserve every overflow declaration on the shared admin scroll ancestors.
+        def scroll_state():
+            return page.locator('iframe[title="MCP"]').evaluate('''(frame) => {
+                const values=[];
+                for(let e=frame.parentElement;e;e=e.parentElement)
+                    values.push({tag:e.tagName,classes:e.className,overflow:e.style.overflow,x:e.style.overflowX,y:e.style.overflowY,
+                                 priority:[e.style.getPropertyPriority('overflow'),e.style.getPropertyPriority('overflow-x'),e.style.getPropertyPriority('overflow-y')]});
+                return values;
+            }''')
+        before_dialog_scroll=scroll_state()
         frame.get_by_text('MCP 已停用',exact=True).wait_for(state='visible')
         frame.get_by_text('尚未创建密钥。',exact=True).wait_for(state='visible')
         frame.get_by_role('button',name='启用 MCP',exact=True).click()
@@ -175,6 +185,7 @@ try:
         frame.get_by_role('button',name='已保存，关闭',exact=True).click()
         frame.locator('#secret').wait_for(state='hidden')
         assert frame.locator('#connection-url').input_value()==''
+        assert scroll_state()==before_dialog_scroll, ('secret close changed outer scroll',before_dialog_scroll,scroll_state())
         row=frame.locator('#keys .key')
         assert not row.evaluate('(e)=>e.open'), 'new key was not collapsed'
         row.locator('summary').first.click()
@@ -195,6 +206,8 @@ try:
         assert frame.locator('#logs-open').evaluate('(e)=>!!e.closest(".card")')
         page.mouse.click(box['x']-8,box['y']+8)
         policy.wait_for(state='hidden')
+        page.wait_for_timeout(100)
+        assert scroll_state()==before_dialog_scroll, ('background scrolling not restored',before_dialog_scroll,scroll_state())
         frame.locator('#execution-policy').click()
         policy.wait_for(state='visible')
         page.keyboard.press('Escape')
@@ -296,8 +309,16 @@ try:
         frame.get_by_text('MCP 已停用',exact=True).wait_for(state='visible')
         page.reload(wait_until='networkidle')
         page.frame_locator('iframe[title="MCP"]').get_by_text('MCP 已停用',exact=True).wait_for(state='visible')
-        page.get_by_role('link',name='服务器列表',exact=True).click()
+        frame=page.frame_locator('iframe[title="MCP"]')
+        frame.locator('#execution-policy').click()
+        frame.locator('#policy-dialog').wait_for(state='visible')
+        # Simulate SPA navigation while a modal is still open. Parent layout
+        # remains mounted and must regain its original one-axis scroll style.
+        page.get_by_role('link',name='服务器列表',exact=True,include_hidden=True).evaluate('e=>e.click()')
         page.wait_for_url('**/admin/servers')
+        page.locator('iframe[title="MCP"]').wait_for(state='detached')
+        page.wait_for_function("getComputedStyle(document.querySelector('.km-admin-panel-content > div')).overflowY==='auto'")
+        assert page.locator('.km-admin-panel-content > div').evaluate('(e)=>getComputedStyle(e).overflowY')=='auto', 'SPA navigation left shared outer scrolling disabled'
         menu.click();page.wait_for_url('**/admin/mcp')
         page.frame_locator('iframe[title="MCP"]').get_by_role('heading',name='MCP 工具接入',exact=True).wait_for(state='visible')
         assert not errors,errors
@@ -365,7 +386,7 @@ try:
         unauth=anon.new_page();unauth.goto(base+'/admin/mcp',wait_until='networkidle');unauth.wait_for_url('**/admin/login**')
         assert requests.get(base+'/api/admin/mcp',timeout=5).status_code==401
         browser.close()
-    print(json.dumps({'scope':'actual Linux loopback panel, fresh SQLite/admin login, bridge and Chromium; node presence uses a locally simulated probe HTTP report; no production, Windows 测试节点 or remote probe','checks':['server-list weight ordering and stable selection','ISO and emoji flag assets','no UUID in node labels','online/offline filter','select filtered replaces all prior hidden selection','offline last report timestamp and unknown state','keys collapsed by default and expandable','desktop and mobile single page scrollbar','thin bounded list scrollbar','dialog visible after scrolling','all current offline nodes selectable','clear and individual selection','native creation dialog with complete credential URL','URL-only initialize and 15 tools','scoped node list','future nodes not automatically granted','existing URL reflects edited scope','key disable rejects same URL','dialog close clears plaintext','panel log does not contain URL key','native MCP sidebar visible','management frame loaded','toggle enable/disable persisted','direct route refresh','server list navigation and return','anonymous login redirect','anonymous management API rejected','MCP-only execution policy dialog','invalid policy rejected','device policy persistence','Key limits and reset inheritance','authenticated log modal with device/type/problem filtering','audit snapshot pagination','log field redaction and safe text rendering','lazy UTF-8 output pagination and truncation/gap notice','rapid reopen and mobile log modal','anonymous log and viewer API rejected','modal bounds after dynamic log loading, backdrop/Esc/top close', 'display cleanup and original text toggle preserve cursors', 'custom public release API and source-only release exclusion', 'explicit MCP safety annotations and bridge build metadata', 'no browser JS errors'],'image':str(image) if image else None},ensure_ascii=False))
+    print(json.dumps({'scope':'actual Linux loopback panel, fresh SQLite/admin login, bridge and Chromium; node presence uses a locally simulated probe HTTP report; no production, Windows 测试节点 or remote probe','checks':['server-list weight ordering and stable selection','ISO and emoji flag assets','no UUID in node labels','online/offline filter','select filtered replaces all prior hidden selection','offline last report timestamp and unknown state','keys collapsed by default and expandable','desktop and mobile single page scrollbar','thin bounded list scrollbar','dialog visible after scrolling','all current offline nodes selectable','clear and individual selection','native creation dialog with complete credential URL','URL-only initialize and 15 tools','scoped node list','future nodes not automatically granted','existing URL reflects edited scope','key disable rejects same URL','dialog close clears plaintext','panel log does not contain URL key','native MCP sidebar visible','management frame loaded','toggle enable/disable persisted','direct route refresh','server list navigation and return','anonymous login redirect','anonymous management API rejected','MCP-only execution policy dialog','invalid policy rejected','device policy persistence','Key limits and reset inheritance','authenticated log modal with device/type/problem filtering','audit snapshot pagination','log field redaction and safe text rendering','lazy UTF-8 output pagination and truncation/gap notice','rapid reopen and mobile log modal','anonymous log and viewer API rejected','modal bounds after dynamic log loading, backdrop/Esc/top close', 'display cleanup and original text toggle preserve cursors', 'custom public release API and source-only release exclusion', 'explicit MCP safety annotations and bridge build metadata', 'one-axis outer scroll and priorities restored after modal close and SPA navigation', 'no browser JS errors'],'image':str(image) if image else None},ensure_ascii=False))
 finally:
     for p in reversed(procs):
         p.terminate()
