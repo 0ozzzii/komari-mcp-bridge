@@ -24,11 +24,13 @@
     if(r.session_id){const show=text('button','查看会话回显','secondary');show.type='button';const output=document.createElement('div');output.className='log-output';output.hidden=true;show.onclick=()=>{show.hidden=true;output.hidden=false;loadOutput(r.session_id,output,epoch)};row.append(show,output)}
     $('logs-list').append(row);
   }
-  function cleanDisplay(s){return s.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g,'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'')}
+  // Display-only projection; the saved bytes and output offsets stay untouched.
+  // Reprocess accumulated pages so ANSI sequences split between pages are joined.
+  function cleanDisplay(s){return s.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g,'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'').replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g,'').replace(/^(?:[ \t]*\n)+/,'')}
   function loadOutput(id,container,viewEpoch){
     container.replaceChildren(text('p','合并终端输出：这是会话流，可能混有后台输出；命令原文未专门保存。仅显示桥接实际收到且保留的内容，可能包含敏感信息。','muted'));
-    const info=text('p','正在读取…','muted'),pre=text('pre',''),next=text('button','继续读取回显','secondary');let offset=0;container.append(info,pre,next);next.disabled=true;
-    async function read(){next.disabled=true;try{const p=await api('logs/output?'+new URLSearchParams({session_id:id,offset:String(offset),limit:String(Math.min(16384,131072-offset))}));if(viewEpoch!==epoch)return;pre.textContent+=cleanDisplay(p.output);offset=p.next_offset;let note='已读取 '+offset+' / '+p.saved_bytes+' 字节。';if(p.output_log_truncated)note+=' 已超过保存上限，存在截断。';if(p.output_gap)note+=' 会话存在输出缺口。';if(p.invalid_utf8_replaced)note+=' 非UTF-8或截断字符已替换显示。';if(!p.saved_bytes)note+=' 暂无保存的回显。';if(offset>131072-256&&p.has_more)note+=' 本窗口显示上限128KiB，请使用诊断流程提取所需时间窗口。';info.textContent=note;next.hidden=!p.has_more;next.disabled=!p.has_more||offset>131072-256}catch(e){if(viewEpoch!==epoch)return;info.textContent='回显不可用：'+e.message;next.disabled=false}}
+    const info=text('p','正在读取…','muted'),pre=text('pre',''),next=text('button','继续读取回显','secondary'),toggle=text('label','显示原始输出（保留终端控制符和启动空行）','log-display-toggle'),raw=document.createElement('input');raw.type='checkbox';toggle.prepend(raw);let offset=0,received='';raw.onchange=()=>{pre.textContent=raw.checked?received:cleanDisplay(received)};container.append(info,toggle,pre,next);next.disabled=true;
+    async function read(){next.disabled=true;try{const p=await api('logs/output?'+new URLSearchParams({session_id:id,offset:String(offset),limit:String(Math.min(16384,131072-offset))}));if(viewEpoch!==epoch)return;received+=p.output;pre.textContent=raw.checked?received:cleanDisplay(received);offset=p.next_offset;let note='已读取 '+offset+' / '+p.saved_bytes+' 字节。';if(p.output_log_truncated)note+=' 已超过保存上限，存在截断。';if(p.output_gap)note+=' 会话存在输出缺口。';if(p.invalid_utf8_replaced)note+=' 非UTF-8或截断字符已替换显示。';if(!p.saved_bytes)note+=' 暂无保存的回显。';if(offset>131072-256&&p.has_more)note+=' 本窗口显示上限128KiB，请使用诊断流程提取所需时间窗口。';info.textContent=note;next.hidden=!p.has_more;next.disabled=!p.has_more||offset>131072-256}catch(e){if(viewEpoch!==epoch)return;info.textContent='回显不可用：'+e.message;next.disabled=false}}
     next.onclick=read;read();
   }
   async function load(reset){
@@ -38,7 +40,7 @@
     catch(e){if(version!==epoch)return;$('logs-status').textContent=/snapshot expired/i.test(e.message)?'日志已轮转或筛选已变化，请点击“查询／刷新”重新读取。':'日志读取失败：'+e.message+'。请确认面板与桥接均已更新。';more=false}
     finally{loading=false;buttons();if(reloadPending&&dialog.open){reloadPending=false;load(true)}}
   }
-  $('logs-open').onclick=()=>{fillSelect('logs-node',nodes.map(n=>({id:n.uuid,name:n.name||'未命名设备'})),'全部设备');fillSelect('logs-key',keyItems.map(k=>({id:k.id,name:k.name||'未命名 Key'})),'全部 Key');positionDialog(dialog);dialog.showModal();load(true)};
+  $('logs-open').onclick=()=>{fillSelect('logs-node',nodes.map(n=>({id:n.uuid,name:n.name||'未命名设备'})),'全部设备');fillSelect('logs-key',keyItems.map(k=>({id:k.id,name:k.name||'未命名 Key'})),'全部 Key');openDialog(dialog);load(true)};
   $('logs-refresh').onclick=()=>load(true);$('logs-more').onclick=()=>load(false);$('logs-close').onclick=()=>dialog.close();dialog.onclose=()=>{epoch++;reloadPending=false;$('logs-list').replaceChildren();$('logs-status').textContent='';cursor='';more=false;shown=0;buttons()};
   buttons();
 })();

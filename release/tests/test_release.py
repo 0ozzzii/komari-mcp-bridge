@@ -379,6 +379,24 @@ class ModelReviewTests(unittest.TestCase):
 
 
 class NotificationTests(unittest.TestCase):
+    def test_success_outcomes_require_confirmed_review_and_actual_merge(self):
+        helper = module('confirmed_notifications', ROOT / 'release/review-notification.py')
+        for result in ('failure', 'cancelled', 'skipped'):
+            notices = helper.actions(result, 'approve', 'success', 'merged', 'true')
+            self.assertFalse(any(kind in ('approved', 'merged') and not resolved for kind, _, resolved in notices))
+        approved = helper.actions('success', 'approve', 'skipped', '', 'false')
+        self.assertTrue(any(kind=='approved' and '未开启' in reason and not resolved for kind, reason, resolved in approved))
+        merged = helper.actions('success', 'approve', 'success', 'merged', 'true')
+        self.assertTrue(any(kind=='merged' and not resolved for kind, _, resolved in merged))
+        self.assertIn(('approved', '', True), merged)
+        for state in ('', 'held', 'already_closed'):
+            notices = helper.actions('success', 'approve', 'success', state, 'true')
+            self.assertFalse(any(kind=='merged' and not resolved for kind, _, resolved in notices))
+        failed = helper.actions('success', 'approve', 'failure', '', 'false')
+        reason = next(reason for kind, reason, _ in failed if kind=='approved')
+        self.assertIn('执行失败', reason)
+        self.assertNotIn('未开启', reason)
+
     def test_review_rejection_is_not_recovery_and_merge_holds_are_reported(self):
         helper = module('review_notification_tests', ROOT / 'release/review-notification.py')
         rejected = helper.actions('success', 'request_changes', 'skipped', '')

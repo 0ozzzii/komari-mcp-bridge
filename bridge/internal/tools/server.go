@@ -23,6 +23,8 @@ import (
 )
 
 type Service struct {
+	Version  string
+	Commit   string
 	Policy   *access.Store
 	Terminal *terminal.Manager
 	Upstream *upstream.Client
@@ -98,7 +100,7 @@ func Definitions() []Definition {
 		{"komari_execution_policy", "Inspect resources or explicitly negotiate temporary per-work concurrency. Only NEW forward execution/input renews the 10min work lease; polling, pings and retries never renew.", enum(field("node_uuid", "work_id", "action", "parallel"), "action", "inspect", "set"), []string{"node_uuid", "work_id", "action"}, false, false},
 		{"komari_nodes_list", "List only nodes allowed for this key; never includes client tokens", field(), nil, true, false},
 		{"komari_capabilities", "Report implemented bridge capabilities and version-dependent limits", field(), nil, true, false},
-		{"komari_session_open", "Create or reuse a caller/node/work-scoped persistent terminal; inspect status until shell ready", field("node_uuid", "work_id", "maintenance", "session_name"), []string{"node_uuid", "work_id"}, false, true},
+		{"komari_session_open", "First negotiate komari_execution_policy(action=set) for this node_uuid/work_id (except explicitly authorized maintenance). Then create or reuse a caller/node/work-scoped persistent terminal; inspect status until shell ready", field("node_uuid", "work_id", "maintenance", "session_name"), []string{"node_uuid", "work_id"}, false, true},
 		{"komari_session_status", "Observe connection, shell continuity, command states and output gaps", field("session_id"), []string{"session_id"}, true, false},
 		{"komari_sessions_list", "List caller-owned bridge sessions", field(), nil, true, false},
 		{"komari_command_run", "Run shell source OR quoted argv in the same shell. No auto-replay; exit code can be unknown", field("session_id", "command_id", "command", "argv", "wait_timeout_ms", "max_output_bytes", "execution_timeout_ms"), []string{"session_id", "command_id"}, false, true},
@@ -107,13 +109,17 @@ func Definitions() []Definition {
 		{"komari_command_interrupt", "Request Ctrl+C; signal delivery and command termination are not guaranteed", field("session_id", "command_id"), []string{"session_id", "command_id"}, false, true},
 		{"komari_terminal_resize", "Resize terminal cells; does not create a new shell", field("session_id", "cols", "rows"), []string{"session_id", "cols", "rows"}, false, false},
 		{"komari_session_close", "Request upstream PTY close and release bridge resources; remote termination has no ACK", field("session_id"), []string{"session_id"}, false, true},
-		{"komari_filesystem", "Native file operations; write accepts text/base64 up to 128 KiB. Mutating actions require operation_id", enum(field("node_uuid", "action", "path", "source", "destination", "mode", "operation_id", "query", "content", "text", "base64"), "action", "list", "roots", "stat", "mkdir", "delete", "move", "copy", "chmod", "search", "write"), []string{"node_uuid", "action"}, false, true},
+		{"komari_filesystem", "Native file operations; write accepts text/base64 up to 128 KiB. Mutating actions require operation_id and file.write permission; list/roots/stat/search require file.read. Mixed tool conservatively declares side effects; annotations do not grant permissions", enum(field("node_uuid", "action", "path", "source", "destination", "mode", "operation_id", "query", "content", "text", "base64"), "action", "list", "roots", "stat", "mkdir", "delete", "move", "copy", "chmod", "search", "write"), []string{"node_uuid", "action"}, false, true},
 		{"komari_file_read", "Read a bounded remote file chunk through native HTTP transfer; returns exact bytes as base64", field("node_uuid", "path", "offset", "max_output_bytes"), []string{"node_uuid", "path"}, true, false},
 		{"komari_host_inspect", "Run a bounded standard host inspection command in a work session; actual tools may be unavailable", enum(field("session_id", "command_id", "subject", "wait_timeout_ms", "max_output_bytes", "execution_timeout_ms"), "subject", "system", "processes", "capabilities"), []string{"session_id", "command_id", "subject"}, false, true},
 	}
 }
 func (s *Service) Server(key access.Key) *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "komari-mcp-bridge", Version: "0.2.0"}, &mcp.ServerOptions{Instructions: execution.Instructions})
+	version := s.Version
+	if version == "" {
+		version = "development"
+	}
+	server := mcp.NewServer(&mcp.Implementation{Name: "komari-mcp-bridge", Version: version}, &mcp.ServerOptions{Instructions: execution.Instructions})
 	for _, d := range Definitions() {
 		if d.Required == nil {
 			d.Required = []string{}
@@ -121,7 +127,8 @@ func (s *Service) Server(key access.Key) *mcp.Server {
 		name := d.Name
 		readOnly := d.ReadOnly
 		destructive := d.Destructive
-		server.AddTool(&mcp.Tool{Name: name, Description: d.Description, InputSchema: map[string]any{"type": "object", "properties": d.Properties, "required": d.Required, "additionalProperties": false}, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive}}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		openWorld := true // Tools can interact with external controlled nodes.
+		server.AddTool(&mcp.Tool{Name: name, Description: d.Description, InputSchema: map[string]any{"type": "object", "properties": d.Properties, "required": d.Required, "additionalProperties": false}, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: readOnly, OpenWorldHint: &openWorld}}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			var args Arguments
 			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
 				return failure("INVALID_ARGUMENTS"), nil
@@ -261,7 +268,7 @@ func (s *Service) call(ctx context.Context, key access.Key, name string, a Argum
 		}
 		return result, nil
 	case "komari_capabilities":
-		return map[string]any{"persistent_shell": "POSIX /bin/sh or Windows PowerShell; verify session shell_type", "shell_types": []string{"posix", "powershell"}, "tool_count": len(Definitions()), "merged_pty_output": true, "normal_exit_code": "marker_confirmed", "interrupt": "best_effort_ctrl_c", "reconnect": "best_effort_with_continuity_probe_when_idle", "upstream_output_replay": false, "durable_remote_jobs": false, "native_files": "requires compatible Komari Server and Agent; verified on use", "full_tui": false, "privilege": "remote Agent OS user and namespace", "execution_timeout": "probe-owned deadline, default 30min / maximum 6h configurable; wait_timeout never kills command", "instructions": execution.Instructions}, nil
+		return map[string]any{"bridge_version": s.Version, "bridge_commit": s.Commit, "persistent_shell": "POSIX sh resolved through PATH (Android /system/bin/sh fallback) or Windows PowerShell; verify session shell_type", "shell_types": []string{"posix", "powershell"}, "tool_count": len(Definitions()), "merged_pty_output": true, "normal_exit_code": "marker_confirmed", "interrupt": "best_effort_ctrl_c", "reconnect": "best_effort_with_continuity_probe_when_idle", "upstream_output_replay": false, "durable_remote_jobs": false, "native_files": "requires compatible Komari Server and Agent; verified on use", "full_tui": false, "privilege": "remote Agent OS user and namespace", "execution_timeout": "probe-owned deadline, default 30min / maximum 6h configurable; wait_timeout never kills command", "instructions": execution.Instructions}, nil
 	case "komari_session_open":
 		if a.SessionName == "" {
 			a.SessionName = "main"

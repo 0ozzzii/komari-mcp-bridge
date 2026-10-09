@@ -139,3 +139,33 @@ func TestPOSIXFailedWriteNeverRunsPartialPayload(t *testing.T) {
 		t.Fatal("failed staging file was not removed", err)
 	}
 }
+
+// A real mksh PTY is a shell-family compatibility check, not an Android device
+// test. CI runs it when mksh is installed; a local fixture can supply its path.
+func TestPOSIXBootstrapOnSupportedShells(t *testing.T) {
+	shells := []string{"/bin/sh", "/bin/bash"}
+	mksh := os.Getenv("KOMARI_TEST_MKSH")
+	if mksh == "" {
+		mksh, _ = exec.LookPath("mksh")
+	}
+	if mksh != "" {
+		shells = append(shells, mksh)
+	}
+	for _, shell := range shells {
+		t.Run(filepath.Base(shell), func(t *testing.T) {
+			if _, err := os.Stat(shell); err != nil {
+				t.Skip("shell not installed")
+			}
+			m, _, key := setupWithEnv(t, []string{"KMB_TEST_INITIAL_SHELL=" + shell})
+			s := ready(t, m, key, "initial-shell")
+			result := run(t, m, key, s, "remember", "cd /; export KMB_CONTEXT_CHECK=kept")
+			if result.ExitCode == nil || *result.ExitCode != 0 {
+				t.Fatal(result)
+			}
+			result = run(t, m, key, s, "recall", "printf '%s:' \"$KMB_CONTEXT_CHECK\"; pwd")
+			if result.ExitCode == nil || *result.ExitCode != 0 || !strings.Contains(result.Output, "kept:/") {
+				t.Fatal(result)
+			}
+		})
+	}
+}

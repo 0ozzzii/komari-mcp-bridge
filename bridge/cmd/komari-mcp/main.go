@@ -93,7 +93,7 @@ func run() int {
 	if (ip == nil || !ip.IsLoopback()) && os.Getenv("BRIDGE_ALLOW_INTERNAL_CONTROL") != "1" {
 		log.Fatal("control address must be loopback; use BRIDGE_ALLOW_INTERNAL_CONTROL=1 only for a private container network")
 	}
-	a, err := app.New(ctx, app.Config{BaseURL: os.Getenv("KOMARI_BASE_URL"), APIKey: os.Getenv("KOMARI_API_KEY"), ControlToken: os.Getenv("BRIDGE_CONTROL_TOKEN"), StateDir: value("BRIDGE_STATE_DIR", "./bridge-data"), Terminal: terminal.Options{ReadyTimeout: duration("CONNECTION_READY_TIMEOUT", 60*time.Second), IdleTimeout: duration("SESSION_IDLE_TIMEOUT", 30*time.Minute), Retention: duration("OUTPUT_RETENTION", 24*time.Hour), MaxSessions: integer("SESSION_LIMIT", 64, 1, 64), BufferBytes: integer("OUTPUT_BUFFER_LIMIT", 2<<20, 32768, 8<<20)}})
+	a, err := app.New(ctx, app.Config{Version: version, Commit: commit, BaseURL: os.Getenv("KOMARI_BASE_URL"), APIKey: os.Getenv("KOMARI_API_KEY"), ControlToken: os.Getenv("BRIDGE_CONTROL_TOKEN"), StateDir: value("BRIDGE_STATE_DIR", "./bridge-data"), Terminal: terminal.Options{ReadyTimeout: duration("CONNECTION_READY_TIMEOUT", 60*time.Second), IdleTimeout: duration("SESSION_IDLE_TIMEOUT", 30*time.Minute), Retention: duration("OUTPUT_RETENTION", 24*time.Hour), MaxSessions: integer("SESSION_LIMIT", 64, 1, 64), BufferBytes: integer("OUTPUT_BUFFER_LIMIT", 2<<20, 32768, 8<<20)}})
 	if err != nil {
 		log.Fatal(err)
 	}

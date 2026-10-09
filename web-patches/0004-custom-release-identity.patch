@@ -1,0 +1,78 @@
+diff --git a/src/components/admin/AdminPanelBar.tsx b/src/components/admin/AdminPanelBar.tsx
+index 7b32631..6603f7c 100644
+--- a/src/components/admin/AdminPanelBar.tsx
++++ b/src/components/admin/AdminPanelBar.tsx
+@@ -1,3 +1,4 @@
++import { panelReleasesAPI, panelReleasesPage } from "@/config/panelRelease";
+ import { Cross1Icon, ExitIcon } from "@radix-ui/react-icons";
+ import ReactMarkdown from "react-markdown";
+ import remarkGfm from "remark-gfm";
+@@ -112,6 +113,7 @@ const AdminPanelBar = ({ content, onboardingReady = false }: AdminPanelBarProps)
+     published_at?: string;
+     draft?: boolean;
+     prerelease?: boolean;
++    assets?: { name: string; size: number }[];
+   }
+   const [latestRelease, setLatestRelease] = useState<GithubReleaseInfo | null>(
+     null,
+@@ -286,7 +288,7 @@ const AdminPanelBar = ({ content, onboardingReady = false }: AdminPanelBarProps)
+     async function loadReleases() {
+       try {
+         const resp = await fetch(
+-          "https://api.github.com/repos/komari-monitor/komari/releases?per_page=100",
++          panelReleasesAPI,
+           {
+             headers: {
+               Accept: "application/vnd.github+json",
+@@ -299,6 +301,10 @@ const AdminPanelBar = ({ content, onboardingReady = false }: AdminPanelBarProps)
+         if (ignore) return;
+         const valid = (data || [])
+           .filter((r) => !r.draft && !r.prerelease)
++          // Empty/source-only releases are not installable panel updates.
++          .filter((r) => ["release.json", "sha256sums.txt"].every(name =>
++            r.assets?.some(asset => asset.name === name && asset.size > 0)) &&
++            r.assets?.some(asset => /^komari-(linux|windows)-/.test(asset.name) && asset.size > 0))
+           .filter((r) =>
+             isNewerVersion(r?.tag_name || r?.name, currentVersion),
+           );
+@@ -455,7 +461,7 @@ const AdminPanelBar = ({ content, onboardingReady = false }: AdminPanelBarProps)
+                 <TablerMenu2 />
+               </IconButton>
+               <a href="/" target="_blank" rel="noopener noreferrer">
+-                <label className="text-xl font-bold">Komari</label>
++                <label className="text-xl font-bold">Komari MCP</label>
+               </a>
+               {updateAvailable && releasesSince.length > 0 && (
+                 <Tips
+@@ -509,11 +515,11 @@ const AdminPanelBar = ({ content, onboardingReady = false }: AdminPanelBarProps)
+                     </div>
+                     <div className="flex justify-end">
+                       <a
+-                        href={latestRelease?.html_url}
++                        href={latestRelease?.html_url || panelReleasesPage}
+                         target="_blank"
+                         rel="noopener noreferrer"
+                       >
+-                        <Button variant="soft">Github</Button>
++                        <Button variant="soft">Komari MCP Releases</Button>
+                       </a>
+                     </div>
+                   </div>
+@@ -522,6 +528,7 @@ const AdminPanelBar = ({ content, onboardingReady = false }: AdminPanelBarProps)
+               <label
+                 className="text-sm text-muted-foreground self-end overflow-hidden"
+                 hidden={isMobile}
++                title="Komari MCP 定制版；更新来自本项目公开发行库"
+               >
+                 {(publicInfo as any)?.version ||
+                   (versionInfo &&
+diff --git a/src/config/panelRelease.ts b/src/config/panelRelease.ts
+new file mode 100644
+index 0000000..cc29f0f
+--- /dev/null
++++ b/src/config/panelRelease.ts
+@@ -0,0 +1,4 @@
++// Our release line is independent of the official Komari version line.
++export const panelReleaseRepository = import.meta.env.VITE_KOMARI_PANEL_REPOSITORY || import.meta.env.VITE_KOMARI_AGENT_REPOSITORY || "0ozzzii/komari-mcp-bridge";
++export const panelReleasesAPI = `https://api.github.com/repos/${panelReleaseRepository}/releases?per_page=100`;
++export const panelReleasesPage = `https://github.com/${panelReleaseRepository}/releases`;

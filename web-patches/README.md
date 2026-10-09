@@ -25,3 +25,5 @@ Windows 部署 Agent：在固定官方前端 checkout 使用 `git apply --check`
 新增 `0002-agent-release-source.patch` 将三处探针安装命令与 Docker 镜像来源统一到本仓库，并在 Release 构建时注入脚本 commit 与探针版本。当前生效的基线和补丁清单以 [release/config.json](../release/config.json) 为准；自动同步会刷新它们。
 
 新增 `0003-mcp-management-layout.patch`：内嵌管理页用 ResizeObserver 自动调整高度，由原后台容器承担页面滚动，避免双重滚动条。更新时必须重新构建前端资源和面板（Go 内嵌管理页也有变化），不能复用旧前端包。
+
+新增 `0004-custom-release-identity.patch`：后台显示 **Komari MCP**，版本仍来自本项目构建时注入的 tag/commit；更新提示只查询本项目公开仓库，不与官方版本线比较。默认发行库 `0ozzzii/komari-mcp-bridge`，可在构建时用 `VITE_KOMARI_PANEL_REPOSITORY` 指定；未设置则沿用 `VITE_KOMARI_AGENT_REPOSITORY`。只提示有面板二进制、`release.json` 和 `sha256sums.txt` 的正式发布，忽略草稿、预发布和无安装资产的发布。更新按钮打开该发行库的 Release；上游源码同步与面板安装更新是两个独立流程。须重新构建前端和面板后生效。

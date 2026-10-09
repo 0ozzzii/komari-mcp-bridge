@@ -25,6 +25,8 @@ import (
 )
 
 type Config struct {
+	Version      string
+	Commit       string
 	BaseURL      string
 	APIKey       string
 	ControlToken string
@@ -78,7 +80,13 @@ func New(ctx context.Context, c Config) (*App, error) {
 		return nil, err
 	}
 	a := &App{Execution: execPolicy, Policy: policy, Terminal: manager, Upstream: up, controlToken: c.ControlToken, servers: map[string]*mcp.Server{}, slots: make(chan struct{}, 64), controlSlots: make(chan struct{}, 8), callerSlots: map[string]chan struct{}{}, audit: audit}
-	a.service = &tools.Service{Policy: policy, Terminal: manager, Upstream: up, Dir: filepath.Join(c.StateDir, "mutations"), Audit: audit.record}
+	if c.Version == "" {
+		c.Version = "development"
+	}
+	if c.Commit == "" {
+		c.Commit = "unknown"
+	}
+	a.service = &tools.Service{Version: c.Version, Commit: c.Commit, Policy: policy, Terminal: manager, Upstream: up, Dir: filepath.Join(c.StateDir, "mutations"), Audit: audit.record}
 	return a, nil
 }
 func (a *App) Close() { a.Terminal.Shutdown(); a.audit.close() }

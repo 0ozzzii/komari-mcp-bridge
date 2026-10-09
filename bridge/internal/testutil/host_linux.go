@@ -62,7 +62,13 @@ func NewHostWithEnv(t testing.TB, env []string) *Host {
 	return h
 }
 func newShell(node, id string, env []string) (*shell, error) {
-	cmd := exec.Command("/bin/sh", "-i")
+	initial := "/bin/sh"
+	for _, setting := range env {
+		if strings.HasPrefix(setting, "KMB_TEST_INITIAL_SHELL=") {
+			initial = strings.TrimPrefix(setting, "KMB_TEST_INITIAL_SHELL=")
+		}
+	}
+	cmd := exec.Command(initial, "-i")
 	cmd.Env = append(os.Environ(), "PS1=", "PS2=")
 	cmd.Env = append(cmd.Env, env...)
 	f, err := pty.Start(cmd)

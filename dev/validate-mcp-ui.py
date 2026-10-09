@@ -65,7 +65,9 @@ try:
     from datetime import datetime,timezone
     fixture_time=datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
     fixture_dir=run/'bridge-state'/'sessions';fixture_dir.mkdir(parents=True)
-    fixture_output=('中文回显：仅本地模拟\n'*1000).encode()
+    fixture_prefix='\x1b[2J\x1b[1;1H'+' '*80+'\r\n'*20
+    fixture_text='中文回显：仅本地模拟\n'*1000
+    fixture_output=(fixture_prefix+fixture_text).encode()
     (fixture_dir/'ui-log-session.log').write_bytes(fixture_output)
     (fixture_dir/'ui-log-session.json').write_text(json.dumps({'session_id':'ui-log-session','owner':'fixture-owner','node_uuid':'fixture-node','connection_state':'closed','generation':1,'created_at':fixture_time,'last_tool_call':fixture_time,'commands':{},'output_end':len(fixture_output),'output_log_truncated':True}))
     start(str(Path(options.bridge).resolve()) if options.bridge else str(repo/'bridge/bin/komari-mcp'),['serve'],{'KOMARI_BASE_URL':base,'KOMARI_API_KEY':key,'BRIDGE_CONTROL_TOKEN':control,'BRIDGE_BIND_ADDRESS':f'127.0.0.1:{mcp_port}','BRIDGE_CONTROL_ADDRESS':f'127.0.0.1:{control_port}','BRIDGE_STATE_DIR':str(run/'bridge-state')},'bridge')
@@ -104,7 +106,17 @@ try:
         ctx=browser.new_context(viewport={'width':1440,'height':1024},locale='zh-CN')
         ctx.add_init_script("localStorage.setItem('language','zh-CN')")
         ctx.add_cookies([{'name':c.name,'value':c.value,'url':base} for c in session.cookies])
-        ctx.route('**/*',lambda route: route.continue_() if route.request.url.startswith(base) else route.abort())
+        release_requests=[]
+        def browser_route(route):
+            url=route.request.url
+            if 'api.github.com/repos/' in url:
+                release_requests.append(url)
+                if '/0ozzzii/komari-mcp-bridge/releases' in url:
+                    assets=[{'name':n,'size':1} for n in ['release.json','sha256sums.txt','komari-linux-amd64']]
+                    releases=[{'tag_name':'v9.0.0','draft':False,'prerelease':False,'assets':[],'html_url':'https://github.com/0ozzzii/komari-mcp-bridge/releases/tag/v9.0.0'}, {'tag_name':'v1.0.4','draft':False,'prerelease':False,'assets':assets,'html_url':'https://github.com/0ozzzii/komari-mcp-bridge/releases/tag/v1.0.4'}]
+                    route.fulfill(json=releases);return
+            route.continue_() if url.startswith(base) else route.abort()
+        ctx.route('**/*',browser_route)
         page=ctx.new_page();errors=[]
         page.on('pageerror',lambda e:errors.append(str(e)))
         page.goto(base+'/admin/mcp',wait_until='networkidle')
@@ -131,7 +143,8 @@ try:
         assert creator.locator('.node-row:visible').count()==1
         assert creator.locator('input:checked').count()==1
         creator.get_by_role('button',name='全选当前节点',exact=True).click()
-        assert creator.locator('input:checked').count()==2
+        assert creator.locator('input:checked').count()==1
+        assert creator.locator('input:checked').input_value()==ids[0], 'filtered select-all retained hidden online node'
         creator.get_by_role('combobox',name='节点状态筛选').select_option('all')
         creator.get_by_role('button',name='全选当前节点',exact=True).click()
         assert creator.locator('input:checked').count()==2
@@ -146,7 +159,16 @@ try:
         url=frame.locator('#connection-url').input_value()
         assert url.startswith(base+'/mcp/kmb_')
         mcp(url,'initialize',{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'local-url-test','version':'1'}})
-        assert len(mcp(url,'tools/list',{})['tools'])==15
+        tools=mcp(url,'tools/list',{})['tools']
+        assert len(tools)==15
+        toolmap={t['name']:t for t in tools}
+        for name in ['komari_command_run','komari_terminal_input','komari_filesystem']:
+            annotations=toolmap[name]['annotations']
+            assert annotations['readOnlyHint'] is False and annotations['destructiveHint'] is True
+            assert annotations['idempotentHint'] is False and annotations['openWorldHint'] is True
+        assert 'komari_execution_policy' in toolmap['komari_session_open']['description']
+        capabilities=mcp(url,'tools/call',{'name':'komari_capabilities','arguments':{}})['structuredContent']
+        assert capabilities['bridge_version'] and capabilities['bridge_commit']
         assert {n['uuid'] for n in listed(url)}==set(ids)
         add_node('后续新增隔离节点')
         assert {n['uuid'] for n in listed(url)}==set(ids), 'all selection unexpectedly granted future node'
@@ -166,6 +188,18 @@ try:
         # All administrator controls remain within the native MCP page.
         frame.locator('#execution-policy').click()
         policy=frame.locator('#policy-dialog')
+        policy.wait_for(state='visible')
+        box=policy.bounding_box()
+        assert box['y']>=16 and box['y']+box['height']<=1008, ('policy clipped to viewport',box)
+        assert frame.locator('#execution-policy').evaluate('(e)=>!!e.closest(".card")')
+        assert frame.locator('#logs-open').evaluate('(e)=>!!e.closest(".card")')
+        page.mouse.click(box['x']-8,box['y']+8)
+        policy.wait_for(state='hidden')
+        frame.locator('#execution-policy').click()
+        policy.wait_for(state='visible')
+        page.keyboard.press('Escape')
+        policy.wait_for(state='hidden')
+        frame.locator('#execution-policy').click()
         policy.wait_for(state='visible')
         assert policy.locator('#p-parallel').input_value()=='0'
         assert policy.locator('#p-lease').input_value()=='10'
@@ -223,6 +257,8 @@ try:
         log_dialog.locator('#logs-refresh').click()
         log_dialog.locator('#logs-status').get_by_text('已显示 50 条',exact=False).wait_for(state='visible')
         assert log_dialog.locator('.log-record').count()==50
+        box=log_dialog.bounding_box()
+        assert box['y']>=16 and box['y']+box['height']<=1008, ('loaded log dialog clipped',box)
         log_dialog.locator('#logs-more').click()
         log_dialog.locator('#logs-status').get_by_text('已显示 63 条',exact=False).wait_for(state='visible')
         assert log_dialog.locator('.log-record').count()==63
@@ -237,7 +273,10 @@ try:
         assert '存在截断' in item.locator('.log-output').inner_text() and '输出缺口' in item.locator('.log-output').inner_text()
         item.get_by_role('button',name='继续读取回显',exact=True).click()
         item.get_by_text('已读取 '+str(len(fixture_output)),exact=False).wait_for(state='visible')
-        assert item.locator('.log-output pre').inner_text()==fixture_output.decode()
+        assert item.locator('.log-output pre').inner_text()==fixture_text, 'display retains terminal startup blank lines'
+        item.locator('.log-display-toggle input').check()
+        assert item.locator('.log-output pre').text_content()==fixture_output.decode(), 'original output bytes not retained in display'
+        item.locator('.log-display-toggle input').uncheck()
         log_dialog.locator('#logs-type').select_option('tool');log_dialog.locator('#logs-refresh').click()
         log_dialog.locator('#logs-status').get_by_text('已显示 1 条',exact=False).wait_for(state='visible')
         log_dialog.locator('.log-record summary').first.click()
@@ -296,7 +335,9 @@ try:
         log_dialog=frame.locator('#logs-dialog');log_dialog.wait_for(state='visible')
         box=log_dialog.bounding_box()
         assert box['x']>=0 and box['x']+box['width']<=392, ('mobile log dialog overflow',box)
-        log_dialog.locator('#logs-close').click()
+        assert box['y']>=16 and box['y']+box['height']<=828, ('mobile log dialog clipped',box)
+        log_dialog.get_by_role('button',name='关闭日志记录',exact=True).click()
+        log_dialog.wait_for(state='hidden')
         page.set_viewport_size({'width':1440,'height':1024})
         page.wait_for_timeout(400)
         frame.locator('#name').fill('滚动后弹窗验证')
@@ -307,6 +348,14 @@ try:
         assert dialog['y']>=0 and dialog['y']+dialog['height']<=1024, ('dialog outside outer viewport',dialog)
         frame.get_by_role('button',name='已保存，关闭',exact=True).click()
         assert not errors,errors
+        assert release_requests and all('/0ozzzii/komari-mcp-bridge/releases' in url for url in release_requests), release_requests
+        assert 'Komari MCP' in page.locator('header').inner_text() if page.locator('header').count() else 'Komari MCP' in page.inner_text('body')
+        page.locator('.check-update').click()
+        update=page.get_by_role('dialog')
+        update.wait_for(state='visible')
+        assert 'v1.0.4' in update.inner_text() and 'v9.0.0' not in update.inner_text(), 'source-only release advertised as installable'
+        assert update.get_by_role('link',name='Komari MCP Releases').get_attribute('href')=='https://github.com/0ozzzii/komari-mcp-bridge/releases/tag/v1.0.4'
+        page.keyboard.press('Escape')
         image=Path(options.screenshot).resolve() if options.screenshot else None
         if image:
             page.set_viewport_size({'width':1440,'height':1600})
@@ -316,7 +365,7 @@ try:
         unauth=anon.new_page();unauth.goto(base+'/admin/mcp',wait_until='networkidle');unauth.wait_for_url('**/admin/login**')
         assert requests.get(base+'/api/admin/mcp',timeout=5).status_code==401
         browser.close()
-    print(json.dumps({'scope':'actual Linux loopback panel, fresh SQLite/admin login, bridge and Chromium; node presence uses a locally simulated probe HTTP report; no production, Windows 测试节点 or remote probe','checks':['server-list weight ordering and stable selection','ISO and emoji flag assets','no UUID in node labels','online/offline filter','select filtered adds without losing hidden selection','offline last report timestamp and unknown state','keys collapsed by default and expandable','desktop and mobile single page scrollbar','thin bounded list scrollbar','dialog visible after scrolling','all current offline nodes selectable','clear and individual selection','native creation dialog with complete credential URL','URL-only initialize and 15 tools','scoped node list','future nodes not automatically granted','existing URL reflects edited scope','key disable rejects same URL','dialog close clears plaintext','panel log does not contain URL key','native MCP sidebar visible','management frame loaded','toggle enable/disable persisted','direct route refresh','server list navigation and return','anonymous login redirect','anonymous management API rejected','MCP-only execution policy dialog','invalid policy rejected','device policy persistence','Key limits and reset inheritance','authenticated log modal with device/type/problem filtering','audit snapshot pagination','log field redaction and safe text rendering','lazy UTF-8 output pagination and truncation/gap notice','rapid reopen and mobile log modal','anonymous log and viewer API rejected','no browser JS errors'],'image':str(image) if image else None},ensure_ascii=False))
+    print(json.dumps({'scope':'actual Linux loopback panel, fresh SQLite/admin login, bridge and Chromium; node presence uses a locally simulated probe HTTP report; no production, Windows 测试节点 or remote probe','checks':['server-list weight ordering and stable selection','ISO and emoji flag assets','no UUID in node labels','online/offline filter','select filtered replaces all prior hidden selection','offline last report timestamp and unknown state','keys collapsed by default and expandable','desktop and mobile single page scrollbar','thin bounded list scrollbar','dialog visible after scrolling','all current offline nodes selectable','clear and individual selection','native creation dialog with complete credential URL','URL-only initialize and 15 tools','scoped node list','future nodes not automatically granted','existing URL reflects edited scope','key disable rejects same URL','dialog close clears plaintext','panel log does not contain URL key','native MCP sidebar visible','management frame loaded','toggle enable/disable persisted','direct route refresh','server list navigation and return','anonymous login redirect','anonymous management API rejected','MCP-only execution policy dialog','invalid policy rejected','device policy persistence','Key limits and reset inheritance','authenticated log modal with device/type/problem filtering','audit snapshot pagination','log field redaction and safe text rendering','lazy UTF-8 output pagination and truncation/gap notice','rapid reopen and mobile log modal','anonymous log and viewer API rejected','modal bounds after dynamic log loading, backdrop/Esc/top close', 'display cleanup and original text toggle preserve cursors', 'custom public release API and source-only release exclusion', 'explicit MCP safety annotations and bridge build metadata', 'no browser JS errors'],'image':str(image) if image else None},ensure_ascii=False))
 finally:
     for p in reversed(procs):
         p.terminate()

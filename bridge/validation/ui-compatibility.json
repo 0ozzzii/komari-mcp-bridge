@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-09",
+  "scope": "Local Linux loopback panel and bridge, fresh databases, Chromium desktop/mobile, simulated node presence/audit/output and mocked public release API; real local PTYs using sh/bash/mksh. No production or Android/Windows remote terminal actions.",
+  "checks_passed": [
+    "filtered select-all replaces all old selection, including hidden nodes",
+    "server-list order, flags, key editing and independent scopes retained",
+    "execution policy and log entry points inside service card",
+    "desktop/mobile modal margins, dynamic log expansion, internal scrolling",
+    "backdrop, Esc and close button dismissal",
+    "display-only ANSI/startup blank line cleanup with original text toggle",
+    "output byte cursor, pagination, gap and truncation warnings retained",
+    "15 MCP tools with explicit safety annotations and session prerequisite",
+    "bridge build version and commit exposed in capabilities",
+    "custom header and public release source; source-only releases excluded",
+    "anonymous requests rejected and credentials absent from access logs",
+    "local sh/bash/mksh bootstrap and persistent cd/export"
+  ],
+  "not_verified": [
+    "Android device bootstrap failure: prompt visible but no READY; local shell-family fixtures did not reproduce it",
+    "Windows real device log display after deployment",
+    "production proxy, live upgrade and installation"
+  ],
+  "production_validation": false
+}

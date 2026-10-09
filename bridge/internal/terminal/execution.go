@@ -140,9 +140,7 @@ func (s *Session) handleGuard(data []byte, fresh bool) bool {
 				return true
 			}
 			s.Shell = kind
-			if kind == ShellPowerShell {
-				s.ShellExecutable = strings.ToLower(v.Shell)
-			}
+			s.ShellExecutable = strings.ToLower(v.Shell)
 		}
 		s.RemoteGuard = true
 		s.RemoteRevision = v.Revision

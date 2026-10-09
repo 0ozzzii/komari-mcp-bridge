@@ -28,7 +28,8 @@
       "patches": [
         "web-patches/0001-mcp-admin-menu.patch",
         "web-patches/0002-agent-release-source.patch",
-        "web-patches/0003-mcp-management-layout.patch"
+        "web-patches/0003-mcp-management-layout.patch",
+        "web-patches/0004-custom-release-identity.patch"
       ],
       "overlay": null
     }

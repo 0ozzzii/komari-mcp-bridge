@@ -10,7 +10,7 @@ notices = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(notices)
 
 
-def actions(review_result, decision, merge_result, merge_state, automerge_enabled):
+def actions(review_result, decision, merge_result, merge_state, automerge_enabled=""):
     result = []
     # 1. 模型调用异常或审核结论不确定
     if review_result in ("failure", "cancelled") or decision == "uncertain":
@@ -23,17 +23,17 @@ def actions(review_result, decision, merge_result, merge_state, automerge_enable
             result.append(("review", "", True))  # 审查通过，关闭之前的拒绝合并 Issue
 
     # 2. 审查通过 (approve) 场景：明确区分“实际合并成功”与“批准但未合并（附原因）”
-    if decision == "approve":
+    if review_result == "success" and decision == "approve":
         if merge_result == "success" and merge_state == "merged":
             result.append(("merged", "官方同步候选 PR 已通过 AI 审查并成功自动合并入私有 main 分支。合并已遵守全部安全准入规则，未执行发布或部署。", False))
             result.append(("merge", "", True))  # 合并成功，关闭之前的合并失败 Issue
+            result.append(("approved", "", True))  # 关闭之前批准但未合并的通知
         else:
             # 批准但未合并：根据具体上下文详细说明原因
-            if merge_result == "skipped" or automerge_enabled != "true":
+            if merge_result in ("failure", "cancelled"):
                 reason = (
                     "官方更新候选 PR 已通过 AI 审查（approve）。\n"
-                    f"未执行自动合并原因：自动合并开关 UPSTREAM_AI_AUTOMERGE 当前未开启或未执行（当前配置值: '{automerge_enabled}'），"
-                    "未触发自动合并，保持 PR 开启等待人工确认或手动合并。"
+                    "未执行自动合并原因：自动合并任务执行失败或被取消。请检查 GitHub 分支保护限制、权限或 Actions 运行日志。"
                 )
             elif merge_state == "held":
                 reason = (
@@ -43,10 +43,11 @@ def actions(review_result, decision, merge_result, merge_state, automerge_enable
                 )
             elif merge_state == "already_closed":
                 reason = "官方更新候选 PR 已通过 AI 审查（approve）。未执行合并原因：该 PR 已经处于关闭状态，未重复执行合并。"
-            elif merge_result in ("failure", "cancelled"):
+            elif merge_result == "skipped" or automerge_enabled != "true":
                 reason = (
                     "官方更新候选 PR 已通过 AI 审查（approve）。\n"
-                    "未执行自动合并原因：自动合并任务执行失败或被取消。请检查 GitHub 分支保护限制、权限或 Actions 运行日志。"
+                    f"未执行自动合并原因：自动合并开关 UPSTREAM_AI_AUTOMERGE 当前未开启或未执行（当前配置值: '{automerge_enabled}'），"
+                    "未触发自动合并，保持 PR 开启等待人工确认或手动合并。"
                 )
             else:
                 reason = f"官方更新候选 PR 已通过 AI 审查（approve），但尚未完成合并（合并任务状态: '{merge_result}', 阶段: '{merge_state}'）。"
@@ -58,6 +59,8 @@ def actions(review_result, decision, merge_result, merge_state, automerge_enable
                 result.append(("merge", "审核通过，但合并任务失败或被取消；检查分支保护、权限及 Actions，未绕过合并规则。", False))
             elif merge_state == "held":
                 result.append(("merge", "审核通过但未完成合并；候选提交、主线或合并条件可能已变化，检查 Actions 后更新分支、重新构建和审核。", False))
+            elif merge_result == "success" and merge_state != "already_closed":
+                result.append(("merge", "合并任务返回成功，但没有确认 merged 状态；不能据此声明已合并。请检查 Actions 的合并结果。", False))
 
     return result
 
