@@ -84,6 +84,7 @@ with sync_playwright() as p:
     frame = load()
     before = overflow_state()
     frame.locator('#execution-policy').click()
+    frame.locator('#policy-dialog').wait_for(state='visible')
     page.locator('iframe').evaluate('''iframe => {
         const doc=iframe.contentDocument, win=iframe.contentWindow;
         doc.querySelector('#policy-dialog').close();
