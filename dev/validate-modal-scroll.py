@@ -20,9 +20,9 @@ policy = {'default': {'max_parallel': 0, 'lease_seconds': 600,
           'default_timeout_seconds': 1800, 'max_timeout_seconds': 21600,
           'idle_seconds': 1800, 'output_bytes': 1048576, 'min_free_percent': 5,
           'maintenance_seconds': 600}, 'nodes': {}, 'keys': {}, 'leases': []}
-outer = '''<!doctype html><style>body{margin:0}#viewport{height:calc(100vh - 24px)}
+outer = '''<!doctype html><style>body{margin:0}#viewport{height:calc(100vh - 64px)}
 iframe{border:0;width:100%;height:1800px}</style>
-<button onclick="document.querySelector('iframe').replaceWith(Object.assign(document.createElement('div'),{innerHTML:'<div style=height:1800px>另一管理页面</div>'}))">切换页面</button>
+<button style="height:64px" onclick="document.querySelector('iframe').replaceWith(Object.assign(document.createElement('div'),{innerHTML:'<div style=height:1800px>另一管理页面</div>'}))">切换页面</button>
 <main id="viewport" style="overflow-y:auto!important"><iframe title="MCP"
 src="/api/admin/mcp" onload="this.contentDocument.documentElement.style.overflow='hidden'"></iframe></main>'''
 with sync_playwright() as p:
@@ -58,6 +58,30 @@ with sync_playwright() as p:
         page.wait_for_function("document.querySelector('#viewport').scrollTop>0")
         viewport.evaluate('e=>e.scrollTop=0')
     checks = []
+    # Opening from a scrolled page must keep the title and close button below
+    # the admin header, not merely inside the whole browser viewport.
+    frame = load()
+    for dialog_id in ['#policy-dialog', '#logs-dialog']:
+        positions = []
+        for scroll in [0, 500]:
+            page.locator('#viewport').evaluate('(e,y)=>e.scrollTop=y', scroll)
+            page.locator('iframe').evaluate('''(iframe,id)=>
+                iframe.contentWindow.eval("openDialog(document.getElementById("+JSON.stringify(id)+"))")''', dialog_id[1:])
+            dialog = frame.locator(dialog_id)
+            dialog.wait_for(state='visible')
+            viewport_box = page.locator('#viewport').bounding_box()
+            box = dialog.bounding_box()
+            close_box = dialog.locator('.dialog-dismiss').bounding_box()
+            assert box['y'] >= viewport_box['y']+15, (dialog_id, scroll, box, viewport_box)
+            assert box['y']+box['height'] <= viewport_box['y']+viewport_box['height']-15
+            assert close_box['y'] >= viewport_box['y']
+            positions.append((box['y'], box['height']))
+            dialog.locator('.dialog-dismiss').click()
+            dialog.wait_for(state='hidden')
+            page.wait_for_function("getComputedStyle(document.querySelector('#viewport')).overflowY==='auto'")
+            assert page.locator('#viewport').evaluate('e=>e.scrollTop') == scroll
+        assert all(abs(a-b)<2 for a,b in zip(*positions)), (dialog_id, positions)
+    checks.append('both dialogs stay within admin viewport at top and after scrolling; background position preserved')
     for style in ['overflow-y:auto!important', 'overflow-x:hidden!important;overflow-y:auto']:
         frame = load()
         page.locator('#viewport').evaluate('(e,s)=>e.setAttribute("style",s)', style)

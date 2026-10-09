@@ -36,7 +36,22 @@ $('create').onclick=()=>action(async()=>{const value=await api('keys/create',{na
 // include padding/borders; never use the auto-sized iframe height as the viewport.
 let dialogScrollLocks=[];
 const dialogOverflowProperties=['overflow','overflow-x','overflow-y'];
-function dialogBounds(){let top=0,bottom=innerHeight;try{if(parent!==window){const r=frameElement.getBoundingClientRect();top=Math.max(0,-r.top);bottom=Math.min(innerHeight,parent.innerHeight-r.top)}}catch(e){}return {top,bottom}}
+function dialogBounds(){
+  let top=0,bottom=innerHeight;
+  try{if(parent!==window){
+    const r=frameElement.getBoundingClientRect(),viewport=parent.visualViewport;
+    let visibleTop=viewport?viewport.offsetTop:0,visibleBottom=visibleTop+(viewport?viewport.height:parent.innerHeight);
+    // The admin content scrolls below the header. Intersect its clipping
+    // ancestors, rather than centering behind the header after page scrolling.
+    for(let e=frameElement.parentElement;e;e=e.parentElement){
+      if(!/^(auto|scroll|hidden|clip)$/.test(parent.getComputedStyle(e).overflowY))continue;
+      const bounds=e.getBoundingClientRect(),edge=bounds.top+e.clientTop;
+      visibleTop=Math.max(visibleTop,edge);visibleBottom=Math.min(visibleBottom,edge+e.clientHeight);
+    }
+    top=Math.max(0,visibleTop-r.top);bottom=Math.min(innerHeight,visibleBottom-r.top);
+  }}catch(e){}
+  return {top,bottom};
+}
 function positionDialog(dialog){const {top,bottom}=dialogBounds(),gap=16;dialog.style.margin='0 auto';dialog.style.bottom='auto';dialog.style.maxHeight=Math.max(64,bottom-top-gap*2)+'px';dialog.style.top=(top+gap)+'px';if(dialog.open){const height=dialog.getBoundingClientRect().height;dialog.style.top=(top+Math.max(gap,(bottom-top-height)/2))+'px'}}
 function lockDialogBackground(){if(dialogScrollLocks.length)return;const elements=[document.documentElement];try{if(parent!==window)for(let e=frameElement.parentElement;e;e=e.parentElement)elements.push(e)}catch(e){}for(const e of elements){const saved=dialogOverflowProperties.map(name=>[name,e.style.getPropertyValue(name),e.style.getPropertyPriority(name)]);dialogScrollLocks.push([e,saved]);e.style.overflow='hidden'}}
 // A shorthand alone is empty for a one-axis declaration. Restore the axes and

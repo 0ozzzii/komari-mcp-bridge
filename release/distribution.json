@@ -1,6 +1,6 @@
 {
   "source_repository": "0ozzzii/komari-mcp-bridge-dev",
-  "source_commit": "f44c2f655cca83159a7580e4d5c696c3036c904c",
+  "source_commit": "51648cbe346520c08d3eb3023dac86264979d1fb",
   "distribution_repository": "0ozzzii/komari-mcp-bridge",
   "export_mode": "sanitized immutable source snapshot; private history excluded",
   "excluded_paths": [
@@ -164,7 +164,7 @@
     "database/utils.go": "91e1879cbc8494651f7c853f7405062e18b77d89cb7dfc4adf3ea949311a9d73",
     "dev/setup.sh": "ed344da3d617d3a196b838b083f13d42f3c7cb9a6e4787699e0763b309b4c1fe",
     "dev/validate-mcp-ui.py": "d323b0b523c2094a1507980f3b765dfddc9639e3b5388ac8a1432e661405e4d5",
-    "dev/validate-modal-scroll.py": "09a9da675c9e996e410180ccfa2e5dc7b60efcb32edbcbb988030978766e0126",
+    "dev/validate-modal-scroll.py": "cbe6f557eb0a016dee5e8603c3d50e201639583d5e99d2c14079673b96f0d015",
     "dev/validate-windows-terminal.py": "797b07076f3d0f2119b6a40997523543cedc1a9d6f89952f96694628945d9a07",
     "go.mod": "fc5e126b10cea9fa38c12be945c69d5f6900270f4c7c092be332bfb20de0a67c",
     "go.sum": "25a349bde696310fb607480656a5acd95a548e0e722677be723ec678ec29c93d",
@@ -176,7 +176,7 @@
     "internal/lifecycle/restart.go": "d8fc2ca1d02cb97383aad59c089b60aa0f24c8a1625966d7fe9712929bedc93c",
     "internal/managedconfig/selectors.go": "1c694a290f2285c7bca58e55da2795f2d8f7e339ea269ca9875bd5e4f302bef7",
     "internal/mcpbridge/log-viewer.js": "376e2b0a46a273dcb3f3319b11fb708dc3844f51be74cdeb2b2b924707edac50",
-    "internal/mcpbridge/management.html": "d5aec9192708b67ac04746a0e6b5504b80db9c98858c035b0ecc955f53abf418",
+    "internal/mcpbridge/management.html": "1b14e6f1302a938a0a224cd088a52aeb5426a44082a4559721eb636bb51945cc",
     "internal/mcpbridge/nodes.go": "63a61fecc4a8c2e5c516664c5bfc77181bbd0371ee5a1d41ced2b20c6013bf5b",
     "internal/mcpbridge/nodes_test.go": "5d79635da31a9485f11357c4b5abdbbf00873dac481974ebbb00b23dae66502e",
     "internal/mcpbridge/proxy.go": "9131a89a0dbaefc579ad1be6c6319c989517f8a264f336c994c403d87c116097",
