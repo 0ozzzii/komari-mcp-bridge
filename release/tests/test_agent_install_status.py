@@ -58,6 +58,7 @@ class AgentInstallStatusTests(unittest.TestCase):
     def test_websocket_handshake_alone_is_not_successful_report(self):
         result, _ = self.run_check('2026/10/11 12:00:00 WebSocket connected using v2 protocol\n')
         self.assertIn('[待确认]', result.stdout)
+        self.assertIn('监控长连接：已建立', result.stdout)
         self.assertNotIn('面板接入已确认', result.stdout)
 
     def test_restart_and_dead_service_cannot_reuse_success(self):
@@ -89,7 +90,7 @@ class AgentInstallStatusTests(unittest.TestCase):
 
     def test_latest_disconnect_is_not_reported_as_live_connection(self):
         result, _ = self.run_check(SUCCESS+'2026/10/11 12:00:01 WebSocket connected using v2 protocol\n2026/10/11 12:00:02 WebSocket disconnected\n')
-        self.assertIn('监控长连接：尚未确认', result.stdout)
+        self.assertIn('监控长连接：已断开', result.stdout)
 
     def test_embedded_helper_matches_source(self):
         embedded = (ROOT/'install.sh').read_text().split('# BEGIN KOMARI AGENT INSTALL STATUS\n')[1].split('# END KOMARI AGENT INSTALL STATUS\n')[0]

@@ -81,6 +81,14 @@ komari_install_error_reason() {
     esac
 }
 
+komari_install_ws_summary() {
+    case "${komari_status_ws:-}" in
+        connected) printf '%s\n' '监控长连接：已建立（本次服务日志确认）。' ;;
+        disconnected) printf '%s\n' '监控长连接：已断开（本次服务日志确认，探针将按原有机制重连）。' ;;
+        *) printf '%s\n' '监控长连接：尚未确认。' ;;
+    esac
+}
+
 komari_install_status() {
     printf '\n%s\n' '安装结果：文件已安装，服务启动请求已提交。'
     printf '版本：%s\n位置：%s\n运行用户：%s\n' "$version_to_install" "$komari_agent_path" "$service_user"
@@ -94,11 +102,15 @@ komari_install_status() {
     komari_status_started=$(date +%s)
     komari_status_result=0
     komari_status_reason=''
+    komari_status_ws=''
+    komari_status_report=''
     komari_status_last_invocation=''
     while :; do
         komari_status_invocation=$(komari_status_systemctl show "${service_name}.service" --property=InvocationID --value 2>/dev/null) || komari_status_invocation=''
         if [ "$komari_status_invocation" != "$komari_status_last_invocation" ]; then
             komari_status_reason=''
+            komari_status_ws=''
+            komari_status_report=''
             komari_status_last_invocation=$komari_status_invocation
         fi
         if printf '%s\n' "$komari_status_invocation" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{32}$'; then
@@ -110,23 +122,27 @@ komari_install_status() {
             # process must not inherit a previous invocation's successful log.
             komari_status_current=$(komari_status_systemctl show "${service_name}.service" --property=InvocationID --value 2>/dev/null) || komari_status_current=''
             if [ "$komari_status_current" = "$komari_status_invocation" ] && komari_status_systemctl is-active --quiet "${service_name}.service"; then
+                komari_status_ws=$(printf '%s\n' "$komari_status_log" | LC_ALL=C awk '/^[0-9][0-9][0-9][0-9]\/.* WebSocket connected using v2 protocol$|^[0-9][0-9][0-9][0-9]\/.* WebSocket recovered from POST fallback$/{state="connected"} /^[0-9][0-9][0-9][0-9]\/.* WebSocket disconnected$|^[0-9][0-9][0-9][0-9]\/.* WebSocket read error:/{state="disconnected"} END{print state}')
                 if printf '%s\n' "$komari_status_log" | LC_ALL=C grep -Eq '^[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} Basic info uploaded successfully$'; then
+                    komari_status_report=confirmed
+                fi
+                if [ "$komari_status_report" = confirmed ] && [ "$komari_status_ws" = connected ]; then
                     printf '%s\n' '[成功] 服务正在运行；面板接入已确认（本次启动的基础信息上报成功）。'
-                    komari_status_ws=$(printf '%s\n' "$komari_status_log" | LC_ALL=C awk '/^[0-9][0-9][0-9][0-9]\/.* WebSocket connected using v2 protocol$|^[0-9][0-9][0-9][0-9]\/.* WebSocket recovered from POST fallback$/{state="connected"} /^[0-9][0-9][0-9][0-9]\/.* WebSocket disconnected$|^[0-9][0-9][0-9][0-9]\/.* WebSocket read error:/{state="disconnected"} END{print state}')
-                    if [ "$komari_status_ws" = connected ]; then
-                        printf '%s\n' '监控长连接：已建立（本次日志确认，不代表永久连接保证）。'
-                    else
-                        printf '%s\n' '监控长连接：尚未确认；已确认的基础信息接入与长连接是不同状态。'
-                    fi
+                    komari_install_ws_summary
                     return 0
                 fi
                 komari_status_reason=$(komari_install_error_reason "$komari_status_log")
+            else
+                komari_status_ws=''
+                komari_status_report=''
             fi
         fi
         komari_status_elapsed=$(($(date +%s) - komari_status_started))
         if [ "$komari_status_elapsed" -ge "$install_check_timeout" ]; then
             if komari_status_systemctl is-active --quiet "${service_name}.service"; then
-                if [ -n "$komari_status_reason" ]; then
+                if [ "$komari_status_report" = confirmed ]; then
+                    printf '%s\n' '[成功] 服务正在运行；面板接入已确认（本次启动的基础信息上报成功）。'
+                elif [ -n "$komari_status_reason" ]; then
                     printf '[连接异常] %s。安装已完成，服务保留运行并按探针原有机制重试。\n' "$komari_status_reason"
                 else
                     printf '%s\n' '[待确认] 服务正在运行，但等待期间没有确认成功上报；这不等于安装失败。'
@@ -134,11 +150,13 @@ komari_install_status() {
             else
                 printf '%s\n' '[失败] 服务未处于运行状态；文件已安装，请查看本机服务日志。'
                 komari_status_result=1
+                komari_status_ws=''
             fi
             break
         fi
         sleep 1
     done
+    komari_install_ws_summary
     if [ "${user_service:-false}" = true ]; then
         printf '查看日志：journalctl --user -u "%s.service" -n 50 --no-pager\n' "$service_name"
     else
