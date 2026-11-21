@@ -1,0 +1,497 @@
+diff --git a/src/components/DetailsGrid.tsx b/src/components/DetailsGrid.tsx
+index 65499fb..e51181d 100644
+--- a/src/components/DetailsGrid.tsx
++++ b/src/components/DetailsGrid.tsx
+@@ -9,6 +9,7 @@ import { formatUptime } from "./Node";
+ import { formatBytes } from "@/utils/unitHelper";
+ import { Flex, Text, Card } from "@radix-ui/themes";
+ import type { Record as LiveRecord } from "@/types/LiveData";
++import { isResourceMetricUnavailable } from "@/utils/resourceScope";
+ 
+ type DetailsGridProps = {
+   uuid: string;
+@@ -34,6 +35,13 @@ export const DetailsGrid = ({
+   const node =
+     nodeProp ?? nodeListContext?.nodeList?.find((n) => n.uuid === uuid);
+   const currentRecord = liveRecord ?? live_data?.data.data[uuid ?? ""];
++  const diskTotalUnknown =
++    isResourceMetricUnavailable(
++      currentRecord?.resource_scope,
++      "disk_total_status",
++      "disk_total",
++      currentRecord?.message
++    ) || !node?.disk_total;
+ 
+   const Container: any = box ? Card : 'div';
+ 
+@@ -103,7 +111,11 @@ export const DetailsGrid = ({
+         <UpDownStack
+           className="km-details-item md:w-64 w-full flex-[0_0_calc(50%-0.5rem)]"
+           up={t("nodeCard.disk")}
+-          down={formatBytes(node?.disk_total || 0)}
++          down={
++            diskTotalUnknown
++              ? t("common.unknown")
++              : formatBytes(node?.disk_total || 0)
++          }
+         />
+         <div className="flex-[0_0_calc(50%-0.5rem)]" />
+         <UpDownStack
+diff --git a/src/components/Node.tsx b/src/components/Node.tsx
+index 6894697..cad0bb9 100644
+--- a/src/components/Node.tsx
++++ b/src/components/Node.tsx
+@@ -14,6 +14,7 @@ import { useTranslation } from "react-i18next";
+ import Tips from "./ui/tips";
+ 
+ import { formatBytes } from "@/utils/unitHelper";
++import { isResourceMetricUnavailable } from "@/utils/resourceScope";
+ 
+ /** 格式化秒*/
+ export function formatUptime(seconds: number, t: TFunction): string {
+@@ -61,9 +62,23 @@ const Node = React.memo(
+   const memoryUsagePercent = basic.mem_total
+     ? (liveData.ram.used / basic.mem_total) * 100
+     : 0;
+-  const diskUsagePercent = basic.disk_total
+-    ? (liveData.disk.used / basic.disk_total) * 100
+-    : 0;
++  const diskUsedUnknown = isResourceMetricUnavailable(
++    liveData.resource_scope,
++    "disk_used_status",
++    "disk_used",
++    liveData.message
++  );
++  const diskTotalUnknown =
++    isResourceMetricUnavailable(
++      liveData.resource_scope,
++      "disk_total_status",
++      "disk_total",
++      liveData.message
++    ) || !basic.disk_total;
++  const diskUsagePercent =
++    diskUsedUnknown || diskTotalUnknown
++      ? null
++      : (liveData.disk.used / basic.disk_total) * 100;
+ 
+   const uploadSpeed = formatBytes(liveData.network.up);
+   const downloadSpeed = formatBytes(liveData.network.down);
+@@ -179,15 +194,23 @@ const Node = React.memo(
+             </Text>
+ 
+             {/* Disk Usage */}
+-            <UsageBar label={t("nodeCard.disk")} value={diskUsagePercent} />
++            <UsageBar
++              label={t("nodeCard.disk")}
++              value={diskUsagePercent}
++              unknownLabel={t("common.unknown")}
++            />
+             <Text
+               size="1"
+               className="md:block hidden"
+               color="gray"
+               style={{ marginTop: "-4px" }}
+             >
+-              ({formatBytes(liveData.disk.used)} /{" "}
+-              {formatBytes(basic.disk_total)})
++              ({diskUsedUnknown
++                ? t("common.unknown")
++                : formatBytes(liveData.disk.used)} /{" "}
++              {diskTotalUnknown
++                ? t("common.unknown")
++                : formatBytes(basic.disk_total)})
+             </Text>
+           </Flex>
+           {basic.traffic_limit > 0 ? (
+diff --git a/src/components/NodeTable.tsx b/src/components/NodeTable.tsx
+index 04dded1..a6b2e3f 100644
+--- a/src/components/NodeTable.tsx
++++ b/src/components/NodeTable.tsx
+@@ -16,6 +16,7 @@ import type { LiveData, Record } from "../types/LiveData";
+ import { formatUptime } from "./Node";
+ import { formatBytes } from "@/utils/unitHelper";
+ import UsageBar from "./UsageBar";
++import { isResourceMetricUnavailable } from "@/utils/resourceScope";
+ import Flag from "./Flag";
+ import PriceTags from "./PriceTags";
+ import Tips from "./ui/tips";
+@@ -338,9 +339,23 @@ const NodeTable: React.FC<NodeTableProps> = ({ nodes, liveData, onlineSet }) =>
+             const memoryUsagePercent = node.mem_total
+               ? (nodeData.ram.used / node.mem_total) * 100
+               : 0;
+-            const diskUsagePercent = node.disk_total
+-              ? (nodeData.disk.used / node.disk_total) * 100
+-              : 0;
++            const diskUsedUnknown = isResourceMetricUnavailable(
++              nodeData.resource_scope,
++              "disk_used_status",
++              "disk_used",
++              nodeData.message
++            );
++            const diskTotalUnknown =
++              isResourceMetricUnavailable(
++                nodeData.resource_scope,
++                "disk_total_status",
++                "disk_total",
++                nodeData.message
++              ) || !node.disk_total;
++            const diskUsagePercent =
++              diskUsedUnknown || diskTotalUnknown
++                ? null
++                : (nodeData.disk.used / node.disk_total) * 100;
+ 
+             return (
+               <React.Fragment key={node.uuid}>
+@@ -434,7 +449,12 @@ const NodeTable: React.FC<NodeTableProps> = ({ nodes, liveData, onlineSet }) =>
+ 
+                   <TableCell>
+                     <div className="w-[100px]">
+-                      <UsageBar label="" value={diskUsagePercent} compact />
++                      <UsageBar
++                        label=""
++                        value={diskUsagePercent}
++                        compact
++                        unknownLabel={t("common.unknown")}
++                      />
+                     </div>
+                   </TableCell>
+                   <TableCell>
+diff --git a/src/components/UsageBar.tsx b/src/components/UsageBar.tsx
+index c29f299..08e923c 100644
+--- a/src/components/UsageBar.tsx
++++ b/src/components/UsageBar.tsx
+@@ -2,14 +2,32 @@ import { Box, Flex, Text } from "@radix-ui/themes";
+ import React from "react";
+ 
+ interface UsageBarProps {
+-  value: number; // Utilization percentage (0–100)
++  value: number | null; // Utilization percentage (0–100), or null when unavailable
+   label: string; // Label for the bar (e.g., "CPU", "Memory", "Disk")
+   compact?: boolean; // Whether to show in compact mode (for tables)
+   max?: number; // Maximum value for the bar (e.g., total RAM, total disk space)
++  unknownLabel?: string;
+ }
+ 
+ const UsageBar = React.memo(
+-  ({ value, label, compact = false, max = 100 }: UsageBarProps) => {
++  ({ value, label, compact = false, max = 100, unknownLabel = "Unknown" }: UsageBarProps) => {
++    if (value === null || !Number.isFinite(value)) {
++      if (compact) {
++        return (
++          <Box className="km-usage-bar" style={{ width: "100%" }}>
++            <label color="gray" className="text-sm">{unknownLabel}</label>
++          </Box>
++        );
++      }
++      return (
++        <Flex direction="column" gap="1" className="km-usage-bar" style={{ width: "100%" }}>
++          <Flex justify="between" align="center">
++            <Text size="2" color="gray">{label}</Text>
++            <Text size="2" weight="medium">{unknownLabel}</Text>
++          </Flex>
++        </Flex>
++      );
++    }
+     // Ensure value is between 0 and 100
+     const clampedValue = Math.min(Math.max(value, 0), max);
+ 
+diff --git a/src/contexts/LiveDataContext.tsx b/src/contexts/LiveDataContext.tsx
+index e487fb3..7d75e70 100644
+--- a/src/contexts/LiveDataContext.tsx
++++ b/src/contexts/LiveDataContext.tsx
+@@ -19,6 +19,16 @@ const sameStringArray = (left: string[], right: string[]) =>
+   left.length === right.length &&
+   left.every((value, index) => value === right[index]);
+ 
++const sameResourceScope = (
++  left?: Record<string, string>,
++  right?: Record<string, string>,
++) =>
++  left === right ||
++  (Boolean(left) &&
++    Boolean(right) &&
++    Object.keys(left!).length === Object.keys(right!).length &&
++    Object.entries(left!).every(([key, value]) => right![key] === value));
++
+ const sameLiveRecord = (left: LiveRecord, right: LiveRecord) =>
+   left.cpu.usage === right.cpu.usage &&
+   left.ram.used === right.ram.used &&
+@@ -38,6 +48,7 @@ const sameLiveRecord = (left: LiveRecord, right: LiveRecord) =>
+   left.uptime === right.uptime &&
+   left.process === right.process &&
+   left.message === right.message &&
++  sameResourceScope(left.resource_scope, right.resource_scope) &&
+   left.updated_at === right.updated_at;
+ 
+ const mergeLiveData = (
+@@ -83,8 +94,14 @@ const mergeLiveData = (
+           : undefined,
+       uptime: record.uptime ?? 0,
+       process: record.process ?? 0,
+-      message: "",
++      message: record.message ?? "",
+       updated_at: record.time ?? 0,
++      resource_scope:
++        record.resource_scope &&
++        typeof record.resource_scope === "object" &&
++        !Array.isArray(record.resource_scope)
++          ? record.resource_scope
++          : undefined,
+     };
+     const previousRecord = previousData?.data[uuid];
+     if (previousRecord && sameLiveRecord(previousRecord, nextRecord)) {
+diff --git a/src/pages/instance/LoadChart.tsx b/src/pages/instance/LoadChart.tsx
+index 1826e38..0d58923 100644
+--- a/src/pages/instance/LoadChart.tsx
++++ b/src/pages/instance/LoadChart.tsx
+@@ -87,6 +87,7 @@ import {
+ } from "@/utils/metricSeries";
+ import { formatBytes } from "@/utils/unitHelper";
+ import type { RecordFormat } from "@/utils/RecordHelper";
++import { isResourceMetricUnavailable } from "@/utils/resourceScope";
+ 
+ type LoadChartProps = {
+   data: RecordFormat[];
+@@ -348,7 +349,15 @@ const fallbackCatalog: MetricCatalogItem[] = [
+     key: "load.average",
+     label: "Load",
+     kind: "load",
+-    realtimeValue: (record) => record.load,
++    realtimeValue: (record) =>
++      isResourceMetricUnavailable(
++        record.resource_scope,
++        "load_status",
++        "load",
++        record.message
++      )
++        ? null
++        : record.load,
+   },
+   {
+     key: "temperature",
+@@ -362,14 +371,30 @@ const fallbackCatalog: MetricCatalogItem[] = [
+     label: "Disk",
+     kind: "bytes",
+     unit: "bytes",
+-    realtimeValue: (record) => record.disk,
++    realtimeValue: (record) =>
++      isResourceMetricUnavailable(
++        record.resource_scope,
++        "disk_used_status",
++        "disk_used",
++        record.message
++      )
++        ? null
++        : record.disk,
+   },
+   {
+     key: "disk.total",
+     label: "Disk Total",
+     kind: "bytes",
+     unit: "bytes",
+-    realtimeValue: (record, node) => record.disk_total || node?.disk_total,
++    realtimeValue: (record, node) =>
++      isResourceMetricUnavailable(
++        record.resource_scope,
++        "disk_total_status",
++        "disk_total",
++        record.message
++      )
++        ? null
++        : record.disk_total || node?.disk_total,
+   },
+   {
+     key: "net.in.rate",
+@@ -493,8 +518,12 @@ const asMetricValue = (value: number | null | undefined) => {
+   return value;
+ };
+ 
+-const formatValue = (value: unknown, kind: MetricKind) => {
+-  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
++const formatValue = (
++  value: unknown,
++  kind: MetricKind,
++  unknownLabel = "-",
++) => {
++  if (typeof value !== "number" || !Number.isFinite(value)) return unknownLabel;
+   switch (kind) {
+     case "percent":
+       return `${value.toFixed(2)}%`;
+@@ -875,16 +904,20 @@ const labelFormatter = (hours: number | undefined) => {
+ const getLatestText = (
+   rows: Array<Record<string, string | number | null>>,
+   series: RenderSeries[],
++  unknownLabel = "-",
+ ) => {
+   for (let rowIndex = rows.length - 1; rowIndex >= 0; rowIndex--) {
+     const row = rows[rowIndex];
++    let unknownItem: RenderSeries | undefined;
+     for (let seriesIndex = 0; seriesIndex < series.length; seriesIndex++) {
+       const item = series[seriesIndex];
+       const value = row[item.dataKey];
+       if (typeof value === "number" && Number.isFinite(value)) {
+         return `${item.label}: ${formatValue(value, item.kind)}`;
+       }
++      if (value === null && !unknownItem) unknownItem = item;
+     }
++    if (unknownItem) return `${unknownItem.label}: ${unknownLabel}`;
+   }
+   return "-";
+ };
+@@ -1545,7 +1578,11 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
+           );
+           const chartTicks = metricChartBoundaryTicks(chartRows);
+           const chartConfig = toChartConfig(built.series);
+-          const latestText = getLatestText(chartRows, built.series);
++          const latestText = getLatestText(
++            chartRows,
++            built.series,
++            t("common.unknown"),
++          );
+           const allHidden = built.series.length > 0 && built.series.every((item) => isSeriesHidden(chart.id, item));
+ 
+           return (
+@@ -1735,7 +1772,11 @@ const LoadChart = ({ data = [], onRealtimeActiveChange }: LoadChartProps) => {
+                       cursor={false}
+                       formatter={(value, name) => {
+                         const item = built.series.find((series) => series.dataKey === name);
+-                        return formatValue(value, item?.kind ?? "raw");
++                        return formatValue(
++                          value,
++                          item?.kind ?? "raw",
++                          t("common.unknown"),
++                        );
+                       }}
+                       content={
+                         <ChartTooltipContent
+diff --git a/src/types/LiveData.tsx b/src/types/LiveData.tsx
+index 04c98d2..3a8e44c 100644
+--- a/src/types/LiveData.tsx
++++ b/src/types/LiveData.tsx
+@@ -46,6 +46,7 @@ export type Record = {
+   process: number;
+   message: string;
+   updated_at: string;
++  resource_scope?: { [key: string]: string };
+ };
+ 
+ export type LiveDataResponse = {
+diff --git a/src/utils/RecordHelper.tsx b/src/utils/RecordHelper.tsx
+index d238efb..969fb07 100644
+--- a/src/utils/RecordHelper.tsx
++++ b/src/utils/RecordHelper.tsx
+@@ -1,4 +1,5 @@
+-import type { Record } from "@/types/LiveData";
++import type { Record as LiveRecord } from "@/types/LiveData";
++import { isResourceMetricUnavailable } from "@/utils/resourceScope";
+ 
+ export interface RecordFormat {
+   client: string;
+@@ -33,11 +34,13 @@ export interface RecordFormat {
+   process: number | null;
+   connections: number | null;
+   connections_udp: number | null;
++  message?: string;
++  resource_scope?: { [key: string]: string };
+ }
+ 
+ export function liveDataToRecords(
+   client: string,
+-  liveData: Record[]
++  liveData: LiveRecord[]
+ ): RecordFormat[] {
+   if (!liveData) return [];
+   return liveData.map((data) => ({
+@@ -76,10 +79,31 @@ export function liveDataToRecords(
+     ram_total: 0,
+     swap: data.swap.used ?? 0,
+     swap_total: 0,
+-    load: data.load.load1 ?? 0,
++    load: isResourceMetricUnavailable(
++      data.resource_scope,
++      "load_status",
++      "load",
++      data.message
++    )
++      ? null
++      : data.load.load1 ?? 0,
+     temp: 0,
+-    disk: data.disk.used ?? 0,
+-    disk_total: 0,
++    disk: isResourceMetricUnavailable(
++      data.resource_scope,
++      "disk_used_status",
++      "disk_used",
++      data.message
++    )
++      ? null
++      : data.disk.used ?? 0,
++    disk_total: isResourceMetricUnavailable(
++      data.resource_scope,
++      "disk_total_status",
++      "disk_total",
++      data.message
++    )
++      ? null
++      : 0,
+     net_in: data.network?.down ?? 0,
+     net_out: data.network?.up ?? 0,
+     net_total_up: data.network?.totalUp ?? 0,
+@@ -87,6 +111,8 @@ export function liveDataToRecords(
+     process: data.process ?? 0,
+     connections: data.connections.tcp ?? 0,
+     connections_udp: data.connections.udp ?? 0,
++    message: data.message,
++    resource_scope: data.resource_scope,
+   }));
+ }
+ 
+diff --git a/src/utils/resourceScope.ts b/src/utils/resourceScope.ts
+new file mode 100644
+index 0000000..13e959a
+--- /dev/null
++++ b/src/utils/resourceScope.ts
+@@ -0,0 +1,43 @@
++export type ResourceScope = Record<string, string> | undefined;
++
++export function getResourceMetricStatus(
++  scope: ResourceScope,
++  statusKey: string,
++  legacyKey?: string,
++  message?: string
++): string | undefined {
++  const status = scope?.[statusKey] || (legacyKey ? scope?.[legacyKey] : "");
++  if (status) return status.trim().toLowerCase();
++
++  const hasLegacyContainerMarker =
++    message?.includes("resource_scope=container") ?? false;
++  if (
++    hasLegacyContainerMarker &&
++    (statusKey === "disk_total_status" || statusKey === "load_status")
++  ) {
++    return "unknown";
++  }
++  return undefined;
++}
++
++export function isResourceMetricUnavailable(
++  scope: ResourceScope,
++  statusKey: string,
++  legacyKey?: string,
++  message?: string
++): boolean {
++  const status = getResourceMetricStatus(scope, statusKey, legacyKey, message);
++  return Boolean(
++    status &&
++      [
++        "unknown",
++        "pending",
++        "unavailable",
++        "unsupported",
++        "not_available",
++        "not_supported",
++        "missing",
++        "error",
++      ].includes(status)
++  );
++}

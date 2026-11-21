@@ -1,0 +1,329 @@
+diff --git a/src/components/admin/NodeTable/NodeEditDialog.tsx b/src/components/admin/NodeTable/NodeEditDialog.tsx
+index f9b9e44..ccb832e 100644
+--- a/src/components/admin/NodeTable/NodeEditDialog.tsx
++++ b/src/components/admin/NodeTable/NodeEditDialog.tsx
+@@ -13,7 +13,6 @@ import { Button, Dialog, Flex, IconButton, TextField } from "@radix-ui/themes";
+ export function EditDialog({ item }: { item: z.infer<typeof schema> }) {
+   const [form, setForm] = React.useState<ClientFormData & { weight: number }>({
+     name: item.name || "",
+-    token: item.token || "", // 从 item 初始化 token
+     remark: item.remark || "", // 从 item 初始化 remark
+     public_remark: item.public_remark || "", // 从 item 初始化 public_remark
+     weight: item.weight || 0,
+@@ -73,21 +72,6 @@ export function EditDialog({ item }: { item: z.infer<typeof schema> }) {
+               disabled={loading}
+             />
+           </div>
+-          <div>
+-            <label className="block mb-1 text-sm font-medium text-muted-foreground">
+-              {t("admin.nodeEdit.token", "Token 令牌")}
+-            </label>
+-            <TextField.Root
+-              value={form.token}
+-              onChange={(e) =>
+-                setForm((f) => ({ ...f, token: e.target.value }))
+-              }
+-              placeholder={t("admin.nodeEdit.tokenPlaceholder", "请输入 Token")}
+-              disabled={loading}
+-              readOnly
+-              className="bg-gray-200"
+-            />
+-          </div>
+           <div>
+             <label className="block mb-1 text-sm font-medium text-muted-foreground">
+               {t("admin.nodeEdit.remark", "私有备注")}
+@@ -128,7 +112,6 @@ export function EditDialog({ item }: { item: z.infer<typeof schema> }) {
+             onClick={() => {
+               const payload: ClientFormData = {
+                 name: form.name,
+-                token: form.token,
+                 remark: form.remark,
+                 public_remark: form.public_remark,
+               };
+diff --git a/src/components/admin/NodeTable/NodeFunction.tsx b/src/components/admin/NodeTable/NodeFunction.tsx
+index ce7698e..0ec0457 100644
+--- a/src/components/admin/NodeTable/NodeFunction.tsx
++++ b/src/components/admin/NodeTable/NodeFunction.tsx
+@@ -6,6 +6,7 @@ import {
+   useAgentInstallRoutes,
+   type AgentInstallRoute,
+ } from "@/config/agentRelease";
++import { requestClientToken } from "@/utils/clientToken";
+ import * as React from "react";
+ import { z } from "zod";
+ import { schema } from "@/components/admin/NodeTable/schema/node";
+@@ -49,6 +50,10 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+   const [removing, setRemoving] = React.useState(false);
+   const [selectedPlatform, setSelectedPlatform] =
+     React.useState<Platform>("linux");
++  const [installDialogOpen, setInstallDialogOpen] = React.useState(false);
++  const [clientToken, setClientToken] = React.useState("");
++  const [tokenLoading, setTokenLoading] = React.useState(false);
++  const tokenRequestId = React.useRef(0);
+   const [selectedInstallRoute, setSelectedInstallRoute] =
+     React.useState<AgentInstallRoute>("github-direct");
+   const installRoutes = useAgentInstallRoutes();
+@@ -61,9 +66,41 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+     serviceName: "",
+   });
+ 
++  const handleInstallDialogOpenChange = (open: boolean) => {
++    if (!open) {
++      tokenRequestId.current += 1;
++      setInstallDialogOpen(false);
++      setClientToken("");
++      setTokenLoading(false);
++      return;
++    }
++
++    const requestId = ++tokenRequestId.current;
++    setInstallDialogOpen(true);
++    setClientToken("");
++    setTokenLoading(true);
++    void requestClientToken(row.original.uuid)
++      .then((token) => {
++        if (tokenRequestId.current !== requestId) return;
++        if (token) setClientToken(token);
++        else setInstallDialogOpen(false);
++      })
++      .catch((error: unknown) => {
++        if (tokenRequestId.current !== requestId) return;
++        setInstallDialogOpen(false);
++        toast.error(
++          error instanceof Error ? error.message : t("common.error", "Error")
++        );
++      })
++      .finally(() => {
++        if (tokenRequestId.current === requestId) setTokenLoading(false);
++      });
++  };
++
+   const generateCommand = () => {
++    if (!clientToken) return "";
+     const host = window.location.origin;
+-    const token = row.original.token ?? "";
++    const token = clientToken;
+     const args: string[] = ["-e", host, "-t", token];
+     // 根据安装选项生成参数
+     if (installOptions.disableWebSsh) {
+@@ -151,7 +188,10 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+ 
+   return (
+     <div className="km-node-function flex gap-3 justify-center">
+-      <Dialog.Root>
++      <Dialog.Root
++        open={installDialogOpen}
++        onOpenChange={handleInstallDialogOpenChange}
++      >
+         <Dialog.Trigger>
+           <IconButton
+             variant="ghost"
+@@ -334,14 +374,18 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+                   disabled
+                   className="w-full"
+                   style={{ minHeight: "80px" }}
+-                  value={generateCommand()}
++                  value={clientToken ? generateCommand() : ""}
+                 />
+               </div>
+             </Flex>
+             <Flex justify="center">
+               <Button
+                 style={{ width: "100%" }}
+-                onClick={() => copyToClipboard(generateCommand())}
++                disabled={tokenLoading || !clientToken}
++                onClick={() => {
++                  const command = generateCommand();
++                  if (command) void copyToClipboard(command);
++                }}
+               >
+                 <Copy size={16} />
+                 {t("common.copy")}
+diff --git a/src/components/admin/NodeTable/schema/node.ts b/src/components/admin/NodeTable/schema/node.ts
+index 7fc8d16..ae2bb43 100644
+--- a/src/components/admin/NodeTable/schema/node.ts
++++ b/src/components/admin/NodeTable/schema/node.ts
+@@ -2,7 +2,6 @@ import { z } from "zod";
+ 
+ export interface ClientFormData {
+   name: string;
+-  token: string;
+   remark: string;
+   public_remark: string;
+ }
+@@ -27,7 +26,6 @@ export const schema = z.object({
+   expired_at: z.string().optional(),
+   created_at: z.string().optional(),
+   updated_at: z.string().optional(),
+-  token: z.string().optional(),
+   remark: z.string().optional(),
+   public_remark: z.string().optional(),
+ });
+diff --git a/src/contexts/NodeDetailsContext.tsx b/src/contexts/NodeDetailsContext.tsx
+index af33b17..f651e39 100644
+--- a/src/contexts/NodeDetailsContext.tsx
++++ b/src/contexts/NodeDetailsContext.tsx
+@@ -2,7 +2,6 @@ import React from 'react';
+ 
+ export type NodeDetail = {
+   uuid: string;
+-  token: string;
+   name: string;
+   cpu_name: string;
+   virtualization: string;
+diff --git a/src/pages/admin/index.tsx b/src/pages/admin/index.tsx
+index 5033c20..12a2d2e 100644
+--- a/src/pages/admin/index.tsx
++++ b/src/pages/admin/index.tsx
+@@ -94,6 +94,7 @@ import {
+ import { useSettings } from "@/lib/api";
+ import { SelectOrInput } from "@/components/ui/select-or-input";
+ import { useRPC2Call } from "@/contexts/RPC2Context";
++import { requestClientToken } from "@/utils/clientToken";
+ 
+ 
+ const NodeDetailsPage = () => {
+@@ -1607,8 +1608,13 @@ function GenerateCommandButton({
+   settings: any;
+   isSnapshotBackend: boolean;
+ }) {
++  const { t } = useTranslation();
+   const [selectedPlatform, setSelectedPlatform] =
+     React.useState<Platform>("linux");
++  const [dialogOpen, setDialogOpen] = React.useState(false);
++  const [clientToken, setClientToken] = React.useState("");
++  const [tokenLoading, setTokenLoading] = React.useState(false);
++  const tokenRequestId = React.useRef(0);
+   const [selectedInstallRoute, setSelectedInstallRoute] =
+     React.useState<AgentInstallRoute>("github-direct");
+   const installRoutes = useAgentInstallRoutes();
+@@ -1654,7 +1660,39 @@ function GenerateCommandButton({
+     }));
+   }, [isSnapshotBackend]);
+ 
++  const handleDialogOpenChange = (open: boolean) => {
++    if (!open) {
++      tokenRequestId.current += 1;
++      setDialogOpen(false);
++      setClientToken("");
++      setTokenLoading(false);
++      return;
++    }
++
++    const requestId = ++tokenRequestId.current;
++    setDialogOpen(true);
++    setClientToken("");
++    setTokenLoading(true);
++    void requestClientToken(node.uuid)
++      .then((token) => {
++        if (tokenRequestId.current !== requestId) return;
++        if (token) setClientToken(token);
++        else setDialogOpen(false);
++      })
++      .catch((error: unknown) => {
++        if (tokenRequestId.current !== requestId) return;
++        setDialogOpen(false);
++        toast.error(
++          error instanceof Error ? error.message : t("common.error", "Error")
++        );
++      })
++      .finally(() => {
++        if (tokenRequestId.current === requestId) setTokenLoading(false);
++      });
++  };
++
+   const generateCommand = () => {
++    if (!clientToken) return "";
+     const host = function () {
+       if (!settings.script_domain) {
+         return window.location.origin;
+@@ -1664,7 +1702,7 @@ function GenerateCommandButton({
+       }
+       return `http://${settings.script_domain.replace(/\/+$/, "")}`;
+     }();
+-    const token = node.token || "";
++    const token = clientToken;
+     let args = ["-e", host, "-t", token];
+     // 根据安装选项生成参数
+     if (installOptions.disableWebSsh) {
+@@ -1839,9 +1877,8 @@ function GenerateCommandButton({
+       console.error("Failed to copy text: ", err);
+     }
+   };
+-  const { t } = useTranslation();
+   return (
+-    <Dialog.Root>
++    <Dialog.Root open={dialogOpen} onOpenChange={handleDialogOpenChange}>
+       <Dialog.Trigger>
+         <IconButton variant="ghost" title={t("admin.nodeTable.installCommand")}>
+           <Download size="18" />
+@@ -2461,14 +2498,18 @@ function GenerateCommandButton({
+                 disabled
+                 className="w-full"
+                 style={{ minHeight: "80px" }}
+-                value={generateCommand()}
++                value={clientToken ? generateCommand() : ""}
+               />
+             </div>
+           </Flex>
+           <Flex justify="center">
+             <Button
+               style={{ width: "100%" }}
+-              onClick={() => copyToClipboard(generateCommand())}
++                disabled={tokenLoading || !clientToken}
++                onClick={() => {
++                  const command = generateCommand();
++                  if (command) void copyToClipboard(command);
++                }}
+             >
+               <Copy size={16} />
+               {t("common.copy")}
+diff --git a/src/utils/clientToken.ts b/src/utils/clientToken.ts
+new file mode 100644
+index 0000000..d071bce
+--- /dev/null
++++ b/src/utils/clientToken.ts
+@@ -0,0 +1,43 @@
++import { t } from "i18next";
++
++type ClientTokenPayload = {
++  token?: unknown;
++  data?: { token?: unknown };
++  message?: unknown;
++  error?: unknown;
++};
++
++export async function requestClientToken(uuid: string): Promise<string | null> {
++  const request = (twoFactorCode?: string) =>
++    fetch(`/api/admin/client/${encodeURIComponent(uuid)}/token`, {
++      headers: twoFactorCode ? { "X-2FA-Code": twoFactorCode } : undefined,
++    });
++
++  let response = await request();
++  if (response.status === 401) {
++    const code = window.prompt(
++      t(
++        "account.2fa_otp_input_prompt",
++        "Please enter the one-time password from your authenticator app"
++      )
++    );
++    if (!code?.trim()) return null;
++    response = await request(code.trim());
++  }
++
++  const payload = (await response.json().catch(() => null)) as
++    | ClientTokenPayload
++    | null;
++  if (!response.ok) {
++    const detail = payload?.message ?? payload?.error;
++    throw new Error(
++      typeof detail === "string" && detail ? detail : `HTTP ${response.status}`
++    );
++  }
++
++  const token = payload?.token ?? payload?.data?.token;
++  if (typeof token !== "string" || !token) {
++    throw new Error("Client token was not returned");
++  }
++  return token;
++}

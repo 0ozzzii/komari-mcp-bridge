@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
-	logger "github.com/komari-monitor/komari/utils/log"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +16,7 @@ import (
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/tasks"
 	v2 "github.com/komari-monitor/komari/protocol/v2"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/utils/notifier"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
 	"github.com/komari-monitor/komari/web/api"
@@ -25,15 +26,20 @@ import (
 
 func readMaybeCompressedBody(r *http.Request) ([]byte, error) {
 	defer r.Body.Close()
+	var payload io.Reader = r.Body
 	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
-		zr, err := gzip.NewReader(r.Body)
+		zr, err := gzip.NewReader(payload)
 		if err != nil {
 			return nil, err
 		}
 		defer zr.Close()
-		return io.ReadAll(zr)
+		payload = zr
 	}
-	return io.ReadAll(r.Body)
+	data, err := io.ReadAll(io.LimitReader(payload, api.ClientV2RequestLimit+1))
+	if err == nil && len(data) > api.ClientV2RequestLimit {
+		return nil, &http.MaxBytesError{Limit: api.ClientV2RequestLimit}
+	}
+	return data, err
 }
 
 func bindV2Params[T any](raw any, target *T) error {
@@ -131,19 +137,25 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 }
 
 func UploadV2RPC(c *gin.Context) {
+	uuid, ok := clientUUIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, v2.Error(nil, -32001, "invalid token", nil))
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, api.ClientV2RequestLimit)
 	bytesBody, err := readMaybeCompressedBody(c.Request)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, v2.Error(nil, -32700, "invalid compressed body", err.Error()))
+		status := http.StatusBadRequest
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		c.JSON(status, v2.Error(nil, -32700, "invalid or oversized agent payload", nil))
 		return
 	}
 	var req v2.Request
 	if err := json.Unmarshal(bytesBody, &req); err != nil {
 		c.JSON(http.StatusBadRequest, v2.Error(nil, -32700, "parse error", err.Error()))
-		return
-	}
-	uuid, ok := clientUUIDFromContext(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, v2.Error(req.ID, -32001, "invalid token", nil))
 		return
 	}
 	resp := handleV2RPC(uuid, req, true)
@@ -166,6 +178,7 @@ func WebSocketV2RPC(c *gin.Context) {
 	}
 	defer conn.Close()
 	conn.SetWriteTimeout(v2WebSocketWriteWait)
+	conn.SetReadLimit(api.ClientV2RequestLimit)
 
 	uuid, ok := clientUUIDFromContext(c)
 	if !ok {

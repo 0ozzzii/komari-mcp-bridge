@@ -71,6 +71,7 @@ type IPAddress struct {
 
 type Report struct {
 	UUID        string            `json:"uuid,omitempty"`
+	ResourceScope map[string]string `json:"resource_scope,omitempty"`
 	CPU         CPUReport         `json:"cpu"`
 	Ram         RamReport         `json:"ram"`
 	Swap        RamReport         `json:"swap"`

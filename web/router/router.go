@@ -23,6 +23,13 @@ func Register(r *gin.Engine) {
 	r.Any("/ping", func(c *gin.Context) {
 		c.String(200, "pong")
 	})
+	// Also serve the deployment's public route configuration on origins
+	// which go straight to the panel instead of a static download vhost.
+	r.GET("/komari-ai-v2-downloads/install-routes.json", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.Header("Content-Type", "application/json")
+		c.File("./data/install-routes.json")
+	})
 	r.GET("/admin", func(c *gin.Context) {
 		c.Redirect(http.StatusFound, "/admin/dashboard")
 	})

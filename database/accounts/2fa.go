@@ -1,11 +1,14 @@
 package accounts
 
 import (
+	"errors"
 	"image"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/pquerna/otp/totp"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 var (
@@ -27,9 +30,32 @@ func Generate2Fa() (string, image.Image, error) {
 	return otp.Secret(), img, nil
 }
 
-func Enable2Fa(uuid, secret string) error {
-	db := dbcore.GetDBInstance()
-	return db.Model(&models.User{}).Where("uuid = ?", uuid).Update("two_factor", secret).Error
+var ErrCurrent2FARequired = errors.New("a valid current 2FA code is required")
+
+func Enable2Fa(uuid, secret, currentCode string) error {
+	return enable2FA(dbcore.GetDBInstance(), uuid, secret, currentCode)
+}
+
+func enable2FA(db *gorm.DB, uuid, secret, currentCode string) error {
+	db = db.Session(&gorm.Session{Logger: db.Logger.LogMode(gormlogger.Silent)})
+	var user models.User
+	if err := db.Where("uuid = ?", uuid).First(&user).Error; err != nil {
+		return err
+	}
+	if user.TwoFactor != "" && !totp.Validate(currentCode, user.TwoFactor) {
+		return ErrCurrent2FARequired
+	}
+	// A concurrent enrollment or rotation cannot be overwritten using stale verification.
+	result := db.Model(&models.User{}).
+		Where("uuid = ? AND COALESCE(two_factor, '') = ?", uuid, user.TwoFactor).
+		Update("two_factor", secret)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrCurrent2FARequired
+	}
+	return nil
 }
 
 func Verify2Fa(uuid, code string) (bool, error) {

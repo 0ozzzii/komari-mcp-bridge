@@ -10,7 +10,7 @@ import (
 // Client represents a registered client device
 type Client struct {
 	UUID             string     `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey"`
-	Token            string     `json:"token,omitempty" gorm:"type:varchar(255);unique;not null"`
+	Token            string     `json:"-" gorm:"type:varchar(255);unique;not null"`
 	Name             string     `json:"name" gorm:"type:varchar(100)"`
 	CpuName          string     `json:"cpu_name" gorm:"type:varchar(100)"`
 	Virtualization   string     `json:"virtualization" gorm:"type:varchar(50)"`

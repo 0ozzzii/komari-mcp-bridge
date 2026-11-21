@@ -202,3 +202,13 @@ Windows 部署方可直接参考 [成品部署提示词](windows-deployment-guid
 Linux 的 `install.sh` 在 systemd 环境下默认等待最多 30 秒，读取**本次服务启动的 InvocationID** 对应日志，确认实际基础信息上报成功。服务运行、首次上报和监控 WebSocket 是分别显示的状态；不会把历史成功日志、仅握手成功或域名可访问当作上报成功。终端／MCP 仍须单独验收。
 
 `--install-check-timeout 60` 可调整等待时间（0～120 秒，0 为立即检查）。认证、证书、DNS 或连接异常只输出固定诊断分类，不回显原始日志、参数或 Token。等待超时保留服务运行及原有重试；服务未运行则明确报错。无法读取 journal 或其他服务管理器暂时显示“待确认”，不虚报连接成功。
+
+## Android / Termux and Linux without systemd
+
+See [Android / Termux installation](ANDROID_TERMUX.md) for the ARM64 binary, standalone start/stop launchers, and custom binary preservation. Linux instances without a usable init system are also supported by `--install-no-systemd`.
+
+## Versioned Linux mirrors and setup routes
+
+Serve each release under BASE/VERSION/ and put the installer, supported Agent binaries, and the same build's sha256sums.txt in that directory. For a mirror installation, pass --install-base-url BASE together with an exact --install-version. When a fixed base is supplied, the installer does not switch to another download source. A legacy unversioned mirror should accept only the version whose files it serves.
+
+To expose the install routes in the panel, serve /komari-ai-v2-downloads/install-routes.json on the panel origin. A reverse proxy can serve the public file, or the panel can read data/install-routes.json from its working directory. The JSON object supports direct_report_url, download_base_url, and cft_report_url. Supply absolute HTTPS URLs. Keep the mirror base unversioned; the generated command appends the release directory. The reporting endpoint is independent of the download source.

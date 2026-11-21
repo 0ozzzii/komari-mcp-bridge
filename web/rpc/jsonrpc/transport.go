@@ -48,6 +48,23 @@ func CallFromGin(c *gin.Context, method string, params any) *rpc.JsonRpcResponse
 //
 // 若请求已被 RequireSensitive2FA 中间件校验过(sensitive_2fa_verified),则跳过,避免重复校验。
 func dispatchWithSensitive(ctx context.Context, c *gin.Context, meta *rpc.ContextMeta, req *rpc.JsonRpcRequest) *rpc.JsonRpcResponse {
+	if req.Method == clientTokenMethod {
+		if meta == nil || meta.Principal == nil || meta.Principal.Type != rpc.PrincipalUser ||
+			!rpc.CheckPrincipal(meta.Principal, req.Method) {
+			return rpc.ErrorResponse(req.ID, rpc.PermissionDenied, "A user session is required", nil)
+		}
+		code := extractRequestTwoFACode(req)
+		if code == "" && c != nil {
+			code = c.GetHeader("X-2FA-Code")
+			if code == "" {
+				code = c.GetHeader("X-Two-Factor-Code")
+			}
+		}
+		if err := api.VerifySensitive2FACore(meta.Principal.UserUUID, code, false); err != nil {
+			return rpc.ErrorResponse(req.ID, rpc.PermissionDenied, err.Error(), nil)
+		}
+		return Dispatch(context.WithValue(ctx, clientTokenVerifiedKey{}, true), meta, req)
+	}
 	if meta != nil && meta.Principal != nil && (c == nil || !c.GetBool("sensitive_2fa_verified")) &&
 		rpc.IsSensitive(req.Method) && rpc.CheckPrincipal(meta.Principal, req.Method) {
 		code := extractRequestTwoFACode(req)

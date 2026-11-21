@@ -90,6 +90,36 @@ upgrade_komari
         self.assertFalse((self.path / 'service-operations').exists())
         self.assertEqual(self.dest.read_bytes(), b'existing binary')
 
+    def test_panel_upgrade_start_failure_restores_previous_binary(self):
+        script = r"""
+source "$1"
+INSTALL_DIR=$2; BINARY_PATH="$2/installed"; SERVICE_NAME=test
+progress_reset() { :; }; progress_add() { :; }; log_step() { :; }
+ui_msgbox() { :; }; log_error() { :; }; msg() { printf '%s' "$1"; }
+is_installed() { return 0; }; check_systemd() { return 0; }
+select_edition() { :; }; select_channel() { :; }; detect_arch() { echo amd64; }
+get_download_url() { echo "$TEST_DOWNLOAD_URL"; }
+systemctl() {
+    case $1 in
+        start|is-active)
+            printf '%s\n' "$1 $(cat "$BINARY_PATH" | head -c 8)" >> "$INSTALL_DIR/service-operations"
+            cmp -s "$BINARY_PATH" "$INSTALL_DIR/previous"
+            ;;
+        stop) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+upgrade_komari
+"""
+        (self.path / "previous").write_bytes(self.dest.read_bytes())
+        env = dict(os.environ, TEST_DOWNLOAD_URL=self.url)
+        result = subprocess.run(['bash', '-c', script, 'test', str(ROOT / 'install-komari.sh'), str(self.path)],
+                                env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.dest.read_bytes(), b'existing binary')
+        self.assertEqual((self.path / 'service-operations').read_text().splitlines()[-2:],
+                         ['start existing', 'is-active existing'])
+
     def test_embedded_helpers_match_canonical_source(self):
         for name in ('install.sh', 'install-komari.sh'):
             source = (ROOT / name).read_text().split('# BEGIN KOMARI RELEASE DOWNLOAD\n')[1].split('# END KOMARI RELEASE DOWNLOAD\n')[0]

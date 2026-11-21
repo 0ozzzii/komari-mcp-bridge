@@ -37,7 +37,7 @@ case "$task_component" in
     python3 "$task_root/release/prepare.py" agent "$task_agent"
     cd "$task_agent"
     CGO_ENABLED=0 go build -mod=readonly -buildvcs=false -trimpath \
-      -ldflags="-s -w -X github.com/komari-monitor/komari-agent/update.CurrentVersion=$task_version -X github.com/komari-monitor/komari-agent/update.Repo=$task_repository" \
+      -ldflags="-s -w -X github.com/komari-monitor/komari-agent/update.CurrentVersion=$task_version -X github.com/komari-monitor/komari-agent/update.BuildVariant=komari-agent:custom-runtime -X github.com/komari-monitor/komari-agent/update.Repo=$task_repository" \
       -o "$task_output/komari-agent-$task_os-$task_arch$task_ext" .
     ;;
   bridge)

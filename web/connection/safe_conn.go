@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"sync"
 	"time"
 
@@ -63,6 +64,7 @@ type SafeConn struct {
 	mu           sync.Mutex
 	writeMu      sync.Mutex
 	writeTimeout time.Duration
+	readLimit    int64
 	ID           int64
 
 	interceptor FrameInterceptor
@@ -86,12 +88,33 @@ func (sc *SafeConn) SetInterceptor(info *ConnInfo, interceptor FrameInterceptor)
 	sc.interceptor = interceptor
 }
 
+// SetReadLimit limits wire bytes and the decoded message before hooks or JSON.
+func (sc *SafeConn) SetReadLimit(limit int64) {
+	sc.readLimit = limit
+	sc.conn.SetReadLimit(limit)
+}
+
+func (sc *SafeConn) readMessage() (int, []byte, error) {
+	if sc.readLimit <= 0 {
+		return sc.conn.ReadMessage()
+	}
+	messageType, data, err := sc.conn.NextReader()
+	if err != nil {
+		return 0, nil, err
+	}
+	payload, err := io.ReadAll(io.LimitReader(data, sc.readLimit+1))
+	if err == nil && int64(len(payload)) > sc.readLimit {
+		return 0, nil, websocket.ErrReadLimit
+	}
+	return messageType, payload, err
+}
+
 // readFrame reads one frame and runs the wsMessage hook chain. Frames
 // dropped by hooks are transparently skipped, so callers only ever see
 // processed frames.
 func (sc *SafeConn) readFrame() (int, []byte, error) {
 	for dropped := 0; ; {
-		messageType, data, err := sc.conn.ReadMessage()
+		messageType, data, err := sc.readMessage()
 		if err != nil {
 			return 0, nil, err
 		}

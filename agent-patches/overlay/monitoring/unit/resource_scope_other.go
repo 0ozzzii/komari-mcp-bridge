@@ -8,3 +8,5 @@ func containerCPUCores() (int, bool)       { return 0, false }
 func containerRam() (RamInfo, bool)        { return RamInfo{}, false }
 func containerSwap() (RamInfo, bool)       { return RamInfo{}, false }
 func ResourceScopeInfo() map[string]string { return map[string]string{"mode": "host"} }
+func IsAndroid() bool                      { return false }
+func containerDiskUsage() DiskInfo         { return DiskInfo{} }

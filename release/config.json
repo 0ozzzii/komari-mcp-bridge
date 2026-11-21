@@ -18,7 +18,9 @@
         "agent-patches/0001-container-resource-scope.patch",
         "agent-patches/0002-connection-stability.patch",
         "agent-patches/0003-execution-protection.patch",
-        "agent-patches/0004-windows-shell-metadata.patch"
+        "agent-patches/0004-windows-shell-metadata.patch",
+        "agent-patches/0005-agent-runtime-hardening.patch",
+        "agent-patches/0006-audit-runtime-followup.patch"
       ],
       "overlay": "agent-patches/overlay"
     },
@@ -29,7 +31,9 @@
         "web-patches/0001-mcp-admin-menu.patch",
         "web-patches/0002-agent-release-source.patch",
         "web-patches/0003-mcp-management-layout.patch",
-        "web-patches/0004-custom-release-identity.patch"
+        "web-patches/0004-custom-release-identity.patch",
+        "web-patches/0005-admin-client-token-2fa.patch",
+        "web-patches/0006-panel-resource-scope.patch"
       ],
       "overlay": null
     }

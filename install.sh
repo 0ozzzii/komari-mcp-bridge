@@ -32,13 +32,14 @@ komari_fetch_verified() (
     komari_url=$1
     komari_dest=$2
     komari_name=${komari_url##*/}
-    komari_dir=$(mktemp -d "${komari_dest}.download.XXXXXX")
-    trap 'rm -rf -- "$komari_dir"' EXIT HUP INT TERM
-    curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 "$komari_url" -o "$komari_dir/binary"
-    test -s "$komari_dir/binary"
-    curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 "${komari_url%/*}/sha256sums.txt" -o "$komari_dir/manifest"
-    komari_expected=$(awk -v n="$komari_name" '$2 == n || $2 == "*" n {print $1; count++} END {if(count!=1) exit 1}' "$komari_dir/manifest")
-    printf '%s\n' "$komari_expected" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{64}$'
+    komari_dir=$(mktemp -d "${komari_dest}.download.XXXXXX") || exit 1
+    trap 'rm -rf -- "$komari_dir"' EXIT
+    trap 'exit 1' HUP INT TERM
+    curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 "$komari_url" -o "$komari_dir/binary" || exit 1
+    test -s "$komari_dir/binary" || exit 1
+    curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 "${komari_url%/*}/sha256sums.txt" -o "$komari_dir/manifest" || exit 1
+    komari_expected=$(awk -v n="$komari_name" '$2 == n || $2 == "*" n {print $1; count++} END {if(count!=1) exit 1}' "$komari_dir/manifest") || exit 1
+    printf '%s\n' "$komari_expected" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{64}$' || exit 1
     if command -v sha256sum >/dev/null 2>&1; then
         komari_actual=$(sha256sum "$komari_dir/binary" | awk '{print $1}')
     elif command -v shasum >/dev/null 2>&1; then
@@ -49,10 +50,40 @@ komari_fetch_verified() (
         echo 'SHA256 verification requires sha256sum, shasum or openssl' >&2; exit 1
     fi
     test "$(printf '%s' "$komari_expected" | tr A-F a-f)" = "$komari_actual" || { echo 'Release checksum mismatch; existing installation preserved' >&2; exit 1; }
-    chmod 755 "$komari_dir/binary"
+    chmod 755 "$komari_dir/binary" || exit 1
     mv -f "$komari_dir/binary" "$komari_dest"
 )
 # END KOMARI RELEASE DOWNLOAD
+
+# Explicit installation bases must remain HTTPS even across redirects. Keep
+# this separate from the shared release helper so panel installers retain the
+# byte-for-byte canonical download block.
+komari_fetch_base_verified() (
+    set -eu
+    komari_url=$1
+    komari_dest=$2
+    case "$komari_url" in https://*) ;; *) echo 'Custom release base must use HTTPS' >&2; exit 1 ;; esac
+    komari_name=${komari_url##*/}
+    komari_dir=$(mktemp -d "${komari_dest}.download.XXXXXX") || exit 1
+    trap 'rm -rf -- "$komari_dir"' EXIT HUP INT TERM
+    curl -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 15 --max-time 300 "$komari_url" -o "$komari_dir/binary" || exit 1
+    test -s "$komari_dir/binary" || exit 1
+    curl -fsSL --proto '=https' --proto-redir '=https' --retry 2 --connect-timeout 15 --max-time 60 "${komari_url%/*}/sha256sums.txt" -o "$komari_dir/manifest" || exit 1
+    komari_expected=$(awk -v n="$komari_name" '$2 == n || $2 == "*" n {print $1; count++} END {if(count!=1) exit 1}' "$komari_dir/manifest") || exit 1
+    printf '%s\n' "$komari_expected" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{64}$' || exit 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        komari_actual=$(sha256sum "$komari_dir/binary" | awk '{print $1}') || exit 1
+    elif command -v shasum >/dev/null 2>&1; then
+        komari_actual=$(shasum -a 256 "$komari_dir/binary" | awk '{print $1}') || exit 1
+    elif command -v openssl >/dev/null 2>&1; then
+        komari_actual=$(openssl dgst -sha256 "$komari_dir/binary" | awk '{print $NF}') || exit 1
+    else
+        echo 'SHA256 verification requires sha256sum, shasum or openssl' >&2; exit 1
+    fi
+    test "$(printf '%s' "$komari_expected" | tr A-F a-f)" = "$komari_actual" || { echo 'Release checksum mismatch; existing installation preserved' >&2; exit 1; }
+    chmod 755 "$komari_dir/binary" || exit 1
+    mv -f "$komari_dir/binary" "$komari_dest" || exit 1
+)
 
 # BEGIN KOMARI AGENT INSTALL STATUS
 # Read only this systemd invocation; never print raw logs or startup arguments.
@@ -210,11 +241,19 @@ service_name="komari-agent"
 target_dir="/opt/komari"
 github_proxy=""
 install_version="" # New parameter for specifying version
+install_base_url=""
 install_dir_specified=false
 install_no_mirror=false # 关闭自动加速镜像
 service_user="${SUDO_USER:-$(id -un)}"
 user_service=false
 install_check_timeout=30
+install_no_systemd=false
+keep_custom=false
+replace_custom=false
+auto_update_disabled=false
+case "${AGENT_DISABLE_AUTO_UPDATE:-}" in
+    1|[Tt][Rr][Uu][Ee]) auto_update_disabled=true ;;
+esac
 
 # Detect OS
 os_type=$(uname -s)
@@ -244,8 +283,16 @@ case $os_type in
         ;;
 esac
 
+# Store a shell-quoted copy for the standalone launcher. Never eval user input.
+quote_for_launcher() {
+    local escaped
+    escaped=$(printf '%s.' "$1" | sed "s/'/'\\\\''/g")
+    printf "'%s'" "${escaped%.}"
+}
+
 # Parse install-specific arguments
 komari_args=""
+komari_manual_args=""
 # [[ ]] -> [ ] (POSIX)
 while [ $# -gt 0 ]; do
     case $1 in
@@ -266,6 +313,30 @@ while [ $# -gt 0 ]; do
             install_version="$2"
             shift 2
             ;;
+        --install-base-url)
+            if [ "$#" -lt 2 ]; then
+                log_error "--install-base-url requires an HTTPS base URL."
+                exit 1
+            fi
+            if [ -n "$install_base_url" ] && [ "$install_base_url" != "$2" ]; then
+                log_error "Conflicting --install-base-url values."
+                exit 1
+            fi
+            install_base_url="$2"
+            shift 2
+            ;;
+        --install-no-systemd)
+            install_no_systemd=true
+            shift
+            ;;
+        --keep-custom)
+            keep_custom=true
+            shift
+            ;;
+        --replace-custom)
+            replace_custom=true
+            shift
+            ;;
         --install-no-mirror) # 新增: 关闭自动加速镜像
             install_no_mirror=true
             shift
@@ -285,10 +356,47 @@ while [ $# -gt 0 ]; do
         *)
             # Non-install arguments go to komari_args
             komari_args="$komari_args $1"
+            komari_manual_args="$komari_manual_args $(quote_for_launcher "$1")"
+            case "$1" in
+                --disable-auto-update|--disable-auto-update=[Tt][Rr][Uu][Ee]|--disable-auto-update=[Tt]|--disable-auto-update=1)
+                    auto_update_disabled=true ;;
+            esac
             shift
             ;;
     esac
 done
+
+if [ -n "$install_base_url" ]; then
+    # A custom base is an explicit, single-source release location. Keep URL
+    # syntax deliberately narrow: no credentials, query, fragment, or HTTP.
+    if ! printf '%s\n' "$install_base_url" | LC_ALL=C grep -Eq '^https://[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*(:[0-9]{1,5})?(/[A-Za-z0-9._~%/-]*)?/?$'; then
+        log_error "--install-base-url must be a plain HTTPS origin/path (without credentials, query or fragment)."
+        exit 1
+    fi
+    install_base_authority=${install_base_url#https://}
+    install_base_authority=${install_base_authority%%/*}
+    if [ "${install_base_authority#*:}" != "$install_base_authority" ]; then
+        install_base_port=$(printf '%s' "${install_base_authority##*:}" | sed 's/^0*//')
+        [ -n "$install_base_port" ] || install_base_port=0
+        if [ "$install_base_port" -lt 1 ] || [ "$install_base_port" -gt 65535 ]; then
+            log_error "--install-base-url has an invalid HTTPS port."
+            exit 1
+        fi
+    fi
+    if [ -n "$github_proxy" ]; then
+        log_error "--install-base-url and --install-ghproxy cannot be combined."
+        exit 1
+    fi
+    if [ -z "$install_version" ] || [ "$install_version" = latest ] || [ "$install_version" = snapshot ]; then
+        log_error "--install-base-url requires an exact --install-version tag."
+        exit 1
+    fi
+    if ! printf '%s\n' "$install_version" | LC_ALL=C grep -Eq '^(v[0-9]+\.[0-9]+\.[0-9]+|Snapshot-[A-Za-z0-9._-]+)$'; then
+        log_error "Invalid --install-version for --install-base-url."
+        exit 1
+    fi
+    while [ "${install_base_url%/}" != "$install_base_url" ]; do install_base_url=${install_base_url%/}; done
+fi
 
 # Remove leading space from komari_args if present
 komari_args="${komari_args# }"
@@ -304,13 +412,160 @@ fi
 
 komari_agent_path="${target_dir}/agent"
 
-# User services are the only service type a non-root Linux installation can manage.
-if [ "$installer_uid" -ne 0 ] && [ "$os_name" = "linux" ]; then
-    if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
-        user_service=true
+# Function to detect actual init system
+detect_init_system() {
+    if [ "$os_name" = linux ]; then
+        local pid1_process
+        pid1_process=$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')
+        if [ "$install_no_systemd" = true ] || [ "$pid1_process" = tini ] ||
+            [ -e /system/build.prop ] || [ -e /system/bin/app_process ]; then
+            echo manual
+            return
+        fi
+        if [ "$installer_uid" -ne 0 ]; then
+            if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+                echo systemd-user
+            else
+                echo manual
+            fi
+            return
+        fi
+    fi
+
+    # Check if running on NixOS (special case)
+    if [ -f /etc/NIXOS ]; then
+        echo "nixos"
+        return
+    fi
+
+    # Alpine Linux MUST be checked first
+    # Alpine always uses OpenRC, even in containers where PID 1 might be different
+    if [ -f /etc/alpine-release ]; then
+        if command -v rc-service >/dev/null 2>&1 || [ -f /sbin/openrc-run ]; then
+            echo "openrc"
+            return
+        fi
+    fi
+
+    # Get PID 1 process for other detection
+    pid1_process=$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')
+
+    # If PID 1 is systemd, use systemd
+    if [ "$pid1_process" = "systemd" ] || [ -d /run/systemd/system ]; then
+        if command -v systemctl >/dev/null 2>&1; then
+            # Additional verification that systemd is actually functioning
+            if systemctl list-units >/dev/null 2>&1; then
+                echo "systemd"
+                return
+            fi
+        fi
+    fi
+
+    # Check for Gentoo OpenRC (PID 1 is openrc-init)
+    if [ "$pid1_process" = "openrc-init" ]; then
+        if command -v rc-service >/dev/null 2>&1; then
+            echo "openrc"
+            return
+        fi
+    fi
+
+    # Check for other OpenRC systems (not Alpine, already handled)
+    # Some systems use traditional init with OpenRC
+    if [ "$pid1_process" = "init" ] && [ ! -f /etc/alpine-release ]; then
+        # Check if OpenRC is actually managing services
+        if [ -d /run/openrc ] && command -v rc-service >/dev/null 2>&1; then
+            echo "openrc"
+            return
+        fi
+        # Check for OpenRC files
+        if [ -f /sbin/openrc ] && command -v rc-service >/dev/null 2>&1; then
+            echo "openrc"
+            return
+        fi
+    fi
+
+    # Check for OpenWrt's procd
+    if command -v uci >/dev/null 2>&1 && [ -f /etc/rc.common ]; then
+        echo "procd"
+        return
+    fi
+
+    # Check for macOS launchd
+    if [ "$os_name" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
+        echo "launchd"
+        return
+    fi
+
+    # Fallback: if systemctl exists and appears functional, assume systemd
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl list-units >/dev/null 2>&1; then
+            echo "systemd"
+            return
+        fi
+    fi
+
+    # Last resort: check for OpenRC without other indicators
+    if command -v rc-service >/dev/null 2>&1 && [ -d /etc/init.d ]; then
+        echo "openrc"
+        return
+    fi
+
+    # check for Upstart (CentOS 6)
+    if command -v initctl >/dev/null 2>&1 && [ -d /etc/init ]; then
+        echo "upstart"
+        return
+    fi
+
+    if [ "$os_name" = linux ]; then
+        echo manual
     else
-        log_error "A non-root Linux installation requires a running systemd user session"
-        log_info "Log in through systemd or install with elevated privileges."
+        echo unknown
+    fi
+}
+
+init_system=$(detect_init_system)
+case "$init_system" in
+    systemd-user) user_service=true ;;
+    manual)
+        if [ "$installer_uid" -eq 0 ] && [ "$service_user" != root ]; then
+            log_error "Run the manual installer directly as the intended user, without sudo."
+            exit 1
+        fi
+        if ! command -v nohup >/dev/null 2>&1; then
+            log_error "Manual mode requires nohup (Termux: pkg install coreutils)."
+            exit 1
+        fi
+        ;;
+    unknown)
+        log_error "Unsupported or unknown init system: $init_system"
+        exit 1
+        ;;
+esac
+if [ "$install_no_systemd" = true ] && [ "$os_name" != linux ]; then
+    log_error "--install-no-systemd is available on Linux and Termux."
+    exit 1
+fi
+log_info "Detected init system: $init_system"
+
+is_custom_agent() {
+    # Inspect bytes only. Calling an older agent with an unknown option could
+    # start a second instance. Match the fork and the known legacy du build too.
+    LC_ALL=C grep -aFq -e 'komari-agent:custom-runtime' -e '0ozzzii/komari-mcp-bridge' "$1" ||
+        { command -v sha256sum >/dev/null 2>&1 &&
+          [ "$(sha256sum < "$1" | awk '{print $1}')" = fe03651ae81b744436aa0a382927a7444f7852607770ce2a2f7772b6eaf3664b ]; }
+}
+
+if [ "$keep_custom" = true ] && [ "$replace_custom" = true ]; then
+    log_error "--keep-custom and --replace-custom are mutually exclusive."
+    exit 1
+fi
+if [ -f "$komari_agent_path" ] && [ "$replace_custom" = false ]; then
+    if [ "$keep_custom" = true ]; then
+        log_info "Keeping existing agent and service (--keep-custom)."
+        exit 0
+    fi
+    if [ "$auto_update_disabled" = true ] || is_custom_agent "$komari_agent_path"; then
+        log_error "Existing custom or pinned agent preserved. Use --keep-custom to leave it in place, or --replace-custom for a deliberate replacement."
         exit 1
     fi
 fi
@@ -341,35 +596,114 @@ uninstall_previous() {
     log_step "Checking for previous installation..."
 
     # Stop and disable service if it exists
-    if [ "$user_service" = true ]; then
-        if systemctl --user list-unit-files | grep -q "${service_name}.service"; then
-            log_info "Stopping and disabling existing systemd user service..."
-            systemctl --user stop "${service_name}.service" || true
-            systemctl --user disable "${service_name}.service" || true
-            rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${service_name}.service"
-            chmod 600 "$service_file"
-    systemctl --user daemon-reload
+    if [ "$init_system" = manual ]; then
+        if [ -x "$target_dir/stop-komari-agent.sh" ]; then
+            "$target_dir/stop-komari-agent.sh" || return 1
         fi
-    elif command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q "${service_name}.service"; then
+        if [ "$os_name" = linux ]; then
+            manual_unit="${service_name}.service"
+            manual_user_unit="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${manual_unit}"
+            if command -v systemctl >/dev/null 2>&1; then
+                if [ -f "$manual_user_unit" ] && systemctl --user list-unit-files --no-legend "$manual_unit" 2>/dev/null | awk -v n="$manual_unit" '$1 == n {found=1} END {exit !found}'; then
+                    log_info "Stopping and disabling previous systemd user service for manual migration..."
+                    systemctl --user stop "$manual_unit" || return 1
+                    systemctl --user disable "$manual_unit" || return 1
+                    systemctl --user daemon-reload || return 1
+                fi
+                if [ -f "/etc/systemd/system/${manual_unit}" ] ||
+                    systemctl list-unit-files --no-legend "$manual_unit" 2>/dev/null | awk -v n="$manual_unit" '$1 == n {found=1} END {exit !found}'; then
+                    log_info "Stopping and disabling previous systemd service for manual migration..."
+                    systemctl stop "$manual_unit" || return 1
+                    systemctl disable "$manual_unit" || return 1
+                    systemctl daemon-reload || return 1
+                fi
+            fi
+            if command -v rc-service >/dev/null 2>&1 && [ -f "/etc/init.d/${service_name}" ]; then
+                manual_openrc_status=$(rc-service "$service_name" status 2>&1)
+                case "$manual_openrc_status" in
+                    *"status: started"*|*"status: running"*) previous_legacy_active=true ;;
+                    *"status: stopped"*|*"status: inactive"*) previous_legacy_active=false ;;
+                    *) log_error "Cannot safely migrate OpenRC service: status is unreadable."; return 1 ;;
+                esac
+                if [ ! -d /etc/runlevels ]; then
+                    log_error "Cannot safely migrate OpenRC service: runlevel state is unreadable."
+                    return 1
+                fi
+                previous_legacy_kind=openrc
+                previous_legacy_runlevels=""
+                for manual_runlevel_dir in /etc/runlevels/*; do
+                    if [ -d "$manual_runlevel_dir" ] && { [ -e "$manual_runlevel_dir/$service_name" ] || [ -L "$manual_runlevel_dir/$service_name" ]; }; then
+                        manual_runlevel=${manual_runlevel_dir##*/}
+                        previous_legacy_runlevels="$previous_legacy_runlevels $manual_runlevel"
+                        previous_legacy_enabled=true
+                    fi
+                done
+                log_info "Stopping and disabling previous OpenRC service for manual migration..."
+                if [ "$previous_legacy_active" = true ]; then rc-service "$service_name" stop || return 1; fi
+                for manual_runlevel in $previous_legacy_runlevels; do
+                    rc-update del "$service_name" "$manual_runlevel" || return 1
+                done
+            elif command -v uci >/dev/null 2>&1 && [ -f "/etc/init.d/${service_name}" ]; then
+                if [ ! -d /etc/rc.d ]; then
+                    log_error "Cannot safely migrate procd service: enable state is unreadable."
+                    return 1
+                fi
+                manual_procd_status=$("/etc/init.d/${service_name}" status 2>&1)
+                case "$manual_procd_status" in
+                    *"not running"*|*"status: stopped"*|*"status: inactive"*) previous_legacy_active=false ;;
+                    *"running"*) previous_legacy_active=true ;;
+                    *) log_error "Cannot safely migrate procd service: status is unreadable."; return 1 ;;
+                esac
+                previous_legacy_kind=procd
+                previous_legacy_enabled=false
+                for manual_procd_link in /etc/rc.d/S*"$service_name"; do
+                    if [ -L "$manual_procd_link" ]; then previous_legacy_enabled=true; break; fi
+                done
+                log_info "Stopping and disabling previous procd service for manual migration..."
+                if [ "$previous_legacy_active" = true ]; then "/etc/init.d/${service_name}" stop || return 1; fi
+                if [ "$previous_legacy_enabled" = true ]; then "/etc/init.d/${service_name}" disable || return 1; fi
+            elif command -v initctl >/dev/null 2>&1 && [ -f "/etc/init/${service_name}.conf" ]; then
+                log_info "Stopping previous Upstart service for manual migration..."
+                manual_upstart_conf="/etc/init/${service_name}.conf"
+                manual_upstart_backup="${target_dir}/.${service_name}.upstart.disabled"
+                if initctl status "$service_name" 2>/dev/null | grep -q 'start/running'; then
+                    previous_upstart_active=true
+                    initctl stop "$service_name" || return 1
+                fi
+                if [ -e "$manual_upstart_backup" ]; then
+                    log_error "Cannot disable Upstart service: recovery file already exists at $manual_upstart_backup"
+                    return 1
+                fi
+                cp -p "$manual_upstart_conf" "$manual_upstart_backup" || return 1
+                rm -f "$manual_upstart_conf" || return 1
+            fi
+        fi
+        return 0
+    elif [ "$user_service" = true ]; then
+        if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${service_name}.service" ] ||
+            systemctl --user list-unit-files --no-legend "${service_name}.service" 2>/dev/null | awk -v n="${service_name}.service" '$1 == n {found=1} END {exit !found}'; then
+            log_info "Stopping and disabling existing systemd user service..."
+            systemctl --user stop "${service_name}.service" || return 1
+            systemctl --user disable "${service_name}.service" || return 1
+            systemctl --user daemon-reload || return 1
+        fi
+    elif command -v systemctl >/dev/null 2>&1 && { [ -f "/etc/systemd/system/${service_name}.service" ] ||
+        systemctl list-unit-files --no-legend "${service_name}.service" 2>/dev/null | awk -v n="${service_name}.service" '$1 == n {found=1} END {exit !found}'; }; then
         log_info "Stopping and disabling existing systemd service..."
-        systemctl stop ${service_name}.service
-        systemctl disable ${service_name}.service
-        rm -f "/etc/systemd/system/${service_name}.service"
-        systemctl daemon-reload
+        systemctl stop "${service_name}.service" || return 1
+        systemctl disable "${service_name}.service" || return 1
+        systemctl daemon-reload || return 1
     elif command -v rc-service >/dev/null 2>&1 && [ -f "/etc/init.d/${service_name}" ]; then
         log_info "Stopping and disabling existing OpenRC service..."
-        rc-service ${service_name} stop
-        rc-update del ${service_name} default
-        rm -f "/etc/init.d/${service_name}"
+        rc-service "${service_name}" stop || return 1
+        rc-update del "${service_name}" default || return 1
     elif command -v uci >/dev/null 2>&1 && [ -f "/etc/init.d/${service_name}" ]; then
         log_info "Stopping and disabling existing procd service..."
-        /etc/init.d/${service_name} stop
-        /etc/init.d/${service_name} disable
-        rm -f "/etc/init.d/${service_name}"
+        "/etc/init.d/${service_name}" stop || return 1
+        "/etc/init.d/${service_name}" disable || return 1
     elif command -v initctl >/dev/null 2>&1 && [ -f "/etc/init/${service_name}.conf" ]; then
         log_info "Stopping and removing existing upstart service..."
-        initctl stop ${service_name}
-        rm -f "/etc/init/${service_name}.conf"
+        initctl stop "${service_name}" || return 1
     elif [ "$os_name" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
         # macOS launchd service - check both system and user locations
         system_plist="/Library/LaunchDaemons/com.komari.${service_name}.plist"
@@ -388,11 +722,7 @@ uninstall_previous() {
         fi
     fi
 
-    # Remove old binary if it exists
-    if [ -f "$komari_agent_path" ]; then
-        log_info "Removing old binary..."
-        rm -f "$komari_agent_path"
-    fi
+    return 0
 }
 
 # Existing installation remains running until a candidate is verified.
@@ -536,14 +866,22 @@ resolve_snapshot_version() {
     return 1
 }
 
-version_to_install=$(komari_resolve_release "$install_version") || {
-    log_error "Cannot resolve an installable release; existing installation preserved"; exit 1;
-}
+if [ -n "$install_base_url" ]; then
+    version_to_install=$install_version
+else
+    version_to_install=$(komari_resolve_release "$install_version") || {
+        log_error "Cannot resolve an installable release; existing installation preserved"; exit 1;
+    }
+fi
 log_info "Installing version: $version_to_install"
 file_name="komari-agent-${os_name}-${arch}"
 [ "$os_name" != windows ] || file_name="${file_name}.exe"
-download_url="https://github.com/${komari_release_repository}/releases/download/${version_to_install}/${file_name}"
-if [ -n "$github_proxy" ]; then download_url="${github_proxy}/${download_url}"; fi
+if [ -n "$install_base_url" ]; then
+    download_url="${install_base_url}/${version_to_install}/${file_name}"
+else
+    download_url="https://github.com/${komari_release_repository}/releases/download/${version_to_install}/${file_name}"
+    if [ -n "$github_proxy" ]; then download_url="${github_proxy}/${download_url}"; fi
+fi
 
 log_step "Creating installation directory: ${GREEN}$target_dir${NC}"
 mkdir -p "$target_dir"
@@ -553,7 +891,7 @@ fi
 
 # Download with automatic mirror fallback.
 # 直连失败自动依次尝试常见 GitHub 加速镜像, 可用 --install-no-mirror 关闭.
-if [ -n "$github_proxy" ] || [ "$install_no_mirror" = "true" ]; then
+if [ -n "$install_base_url" ] || [ -n "$github_proxy" ] || [ "$install_no_mirror" = "true" ]; then
     download_urls="$download_url"
 else
     download_urls="
@@ -569,124 +907,311 @@ trap 'rm -f -- "$candidate"' EXIT HUP INT TERM
 dl_ok=""
 for u in $download_urls; do
     log_step "Downloading and verifying $file_name ..."
-    if komari_fetch_verified "$u" "$candidate"; then dl_ok=1; break; fi
+    if [ -n "$install_base_url" ]; then
+        if komari_fetch_base_verified "$u" "$candidate"; then dl_ok=1; break; fi
+    elif komari_fetch_verified "$u" "$candidate"; then
+        dl_ok=1
+        break
+    fi
 done
 if [ -z "$dl_ok" ]; then
     log_error "Release download or SHA256 verification failed; existing installation preserved"
     exit 1
 fi
-# Back up the binary before the official service replacement sequence.
-if [ -f "$komari_agent_path" ]; then
-    cp -p "$komari_agent_path" "${komari_agent_path}.backup" || exit 1
+
+# Keep a private recovery point for the binary and any locally managed
+# systemd unit. It is removed only after the replacement service is healthy.
+rollback_dir=$(mktemp -d "${target_dir}/.install-rollback.XXXXXX") || exit 1
+chmod 700 "$rollback_dir" || { rm -rf -- "$rollback_dir"; exit 1; }
+previous_unit_file=""
+previous_unit_kind=""
+previous_unit_active=false
+previous_unit_enabled=false
+previous_upstart_active=false
+previous_legacy_kind=""
+previous_legacy_active=false
+previous_legacy_enabled=false
+previous_legacy_runlevels=""
+if [ "$os_name" = linux ]; then
+    possible_user_unit="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${service_name}.service"
+    possible_system_unit="/etc/systemd/system/${service_name}.service"
+    if [ -f "$possible_user_unit" ]; then
+        previous_unit_file=$possible_user_unit
+        previous_unit_kind=systemd-user
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl --user is-active --quiet "${service_name}.service" && previous_unit_active=true
+            systemctl --user is-enabled --quiet "${service_name}.service" && previous_unit_enabled=true
+        fi
+    elif [ -f "$possible_system_unit" ]; then
+        previous_unit_file=$possible_system_unit
+        previous_unit_kind=systemd
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl is-active --quiet "${service_name}.service" && previous_unit_active=true
+            systemctl is-enabled --quiet "${service_name}.service" && previous_unit_enabled=true
+        fi
+    fi
 fi
-uninstall_previous
-mv -f "$candidate" "$komari_agent_path" || exit 1
+if [ -n "$previous_unit_file" ]; then
+    cp -p "$previous_unit_file" "$rollback_dir/old.service" || { rm -rf -- "$rollback_dir"; exit 1; }
+fi
+if [ -f "$komari_agent_path" ]; then
+    cp -p "$komari_agent_path" "${komari_agent_path}.backup" || { rm -rf -- "$rollback_dir"; exit 1; }
+    cp -p "$komari_agent_path" "$rollback_dir/old-agent" || { rm -rf -- "$rollback_dir"; exit 1; }
+fi
+
+rollback_install() {
+    log_error "Replacement failed; restoring the previous agent and service state."
+    rollback_preserved=false
+    if [ "$init_system" = systemd-user ]; then
+        systemctl --user stop "${service_name}.service" >/dev/null 2>&1 || :
+        systemctl --user disable "${service_name}.service" >/dev/null 2>&1 || :
+    elif [ "$init_system" = systemd ]; then
+        systemctl stop "${service_name}.service" >/dev/null 2>&1 || :
+        systemctl disable "${service_name}.service" >/dev/null 2>&1 || :
+    elif [ "$init_system" = manual ]; then
+        if [ -x "$target_dir/stop-komari-agent.sh" ]; then "$target_dir/stop-komari-agent.sh" >/dev/null 2>&1 || :; fi
+        if [ "$previous_unit_kind" = systemd-user ]; then
+            systemctl --user stop "${service_name}.service" >/dev/null 2>&1 || :
+            systemctl --user disable "${service_name}.service" >/dev/null 2>&1 || :
+        elif [ "$previous_unit_kind" = systemd ]; then
+            systemctl stop "${service_name}.service" >/dev/null 2>&1 || :
+            systemctl disable "${service_name}.service" >/dev/null 2>&1 || :
+        fi
+        if [ -n "${manual_upstart_conf:-}" ] && [ -f "${manual_upstart_backup:-}" ]; then
+            restore_upstart_tmp="${manual_upstart_conf}.restore.$$"
+            if cp -p "$manual_upstart_backup" "$restore_upstart_tmp" && mv -f "$restore_upstart_tmp" "$manual_upstart_conf"; then
+                initctl reload-configuration || log_error "Could not reload the restored Upstart configuration."
+                if [ "$previous_upstart_active" = true ]; then initctl start "$service_name" || log_error "Could not restart the previous Upstart service."; fi
+            else
+                rm -f -- "$restore_upstart_tmp"
+                log_error "Could not restore the previous Upstart job; recovery copy remains at $manual_upstart_backup"
+                rollback_preserved=true
+            fi
+        fi
+    fi
+    if [ -f "$komari_agent_path.backup" ] && [ -f "$rollback_dir/old-agent" ]; then
+        restore_agent_tmp="${komari_agent_path}.restore.$$"
+        if cp -p "$rollback_dir/old-agent" "$restore_agent_tmp" && mv -f "$restore_agent_tmp" "$komari_agent_path"; then :; else
+            rm -f -- "$restore_agent_tmp"
+            log_error "Could not restore the previous agent binary; recovery copy remains at $rollback_dir/old-agent"
+            rollback_preserved=true
+        fi
+    elif [ ! -f "$rollback_dir/old-agent" ]; then
+        rm -f -- "$komari_agent_path"
+    fi
+    if [ -n "$previous_unit_file" ]; then
+        restore_unit_tmp="${previous_unit_file}.restore.$$"
+        if cp -p "$rollback_dir/old.service" "$restore_unit_tmp" && mv -f "$restore_unit_tmp" "$previous_unit_file"; then :; else
+            rm -f -- "$restore_unit_tmp"
+            log_error "Could not restore the previous service unit; recovery copy remains at $rollback_dir/old.service"
+            rollback_preserved=true
+        fi
+    elif [ -n "${service_file:-}" ]; then
+        rm -f -- "$service_file"
+    fi
+    if [ "$init_system" = manual ] && [ "$previous_legacy_kind" = openrc ]; then
+        for restore_runlevel in $previous_legacy_runlevels; do
+            rc-update add "$service_name" "$restore_runlevel" || { log_error "Could not restore OpenRC runlevel $restore_runlevel."; rollback_preserved=true; }
+        done
+        if [ "$previous_legacy_active" = true ]; then
+            rc-service "$service_name" start || { log_error "Could not restart the previous OpenRC service."; rollback_preserved=true; }
+        fi
+    elif [ "$init_system" = manual ] && [ "$previous_legacy_kind" = procd ]; then
+        if [ "$previous_legacy_enabled" = true ]; then
+            "/etc/init.d/${service_name}" enable || { log_error "Could not re-enable the previous procd service."; rollback_preserved=true; }
+        fi
+        if [ "$previous_legacy_active" = true ]; then
+            "/etc/init.d/${service_name}" start || { log_error "Could not restart the previous procd service."; rollback_preserved=true; }
+        fi
+    fi
+    if [ "$init_system" = systemd-user ]; then
+        systemctl --user daemon-reload || log_error "Could not reload the restored user unit state."
+    elif [ "$init_system" = systemd ]; then
+        systemctl daemon-reload || log_error "Could not reload the restored system unit state."
+    elif [ "$init_system" = manual ] && [ "$previous_unit_kind" = systemd-user ]; then
+        systemctl --user daemon-reload || log_error "Could not reload the restored user unit state."
+    elif [ "$init_system" = manual ] && [ "$previous_unit_kind" = systemd ]; then
+        systemctl daemon-reload || log_error "Could not reload the restored system unit state."
+    fi
+    if [ -n "$previous_unit_file" ] && command -v systemctl >/dev/null 2>&1; then
+        if [ "$previous_unit_kind" = systemd-user ]; then
+            if [ "$previous_unit_enabled" = true ]; then systemctl --user enable "${service_name}.service" || log_error "Could not re-enable the previous user service."; fi
+            if [ "$previous_unit_active" = true ]; then systemctl --user start "${service_name}.service" || log_error "Could not restart the previous user service."; fi
+        else
+            if [ "$previous_unit_enabled" = true ]; then systemctl enable "${service_name}.service" || log_error "Could not re-enable the previous service."; fi
+            if [ "$previous_unit_active" = true ]; then systemctl start "${service_name}.service" || log_error "Could not restart the previous service."; fi
+        fi
+    fi
+    if [ "$rollback_preserved" = false ]; then
+        rm -rf -- "$rollback_dir"
+    else
+        log_error "Recovery files preserved at $rollback_dir"
+    fi
+}
+
+# Back up the binary before the official service replacement sequence.
+uninstall_previous || { rollback_install; exit 1; }
+mv -f "$candidate" "$komari_agent_path" || { rollback_install; exit 1; }
 trap - EXIT HUP INT TERM
 
 # Set executable permissions
-chmod +x "$komari_agent_path"
+chmod +x "$komari_agent_path" || { rollback_install; exit 1; }
 if [ "$installer_uid" -eq 0 ] && [ "$service_user" != "root" ]; then
-    chown "$service_user" "$komari_agent_path"
+    chown "$service_user" "$komari_agent_path" || { rollback_install; exit 1; }
 fi
 log_success "Komari-agent installed to ${GREEN}$komari_agent_path${NC}"
 
 # Detect init system and configure service
 log_step "Configuring system service..."
 
-# Function to detect actual init system
-detect_init_system() {
-    # Check if running on NixOS (special case)
-    if [ -f /etc/NIXOS ]; then
-        echo "nixos"
-        return
+install_manual_launchers() (
+    set -e
+    umask 077
+    tmp=$(mktemp -d "$target_dir/.manual-launchers.XXXXXX")
+    trap 'rm -f -- "$tmp/start-komari-agent.sh" "$tmp/stop-komari-agent.sh"; rmdir -- "$tmp"' EXIT
+    trap 'exit 1' HUP INT TERM
+    # Use the running shell path on Android, whose /bin/sh may be absent.
+    interpreter=/bin/sh
+    if [ -n "${PREFIX:-}" ] && [ -x "$PREFIX/bin/sh" ]; then
+        interpreter=$PREFIX/bin/sh
     fi
-
-    # Alpine Linux MUST be checked first
-    # Alpine always uses OpenRC, even in containers where PID 1 might be different
-    if [ -f /etc/alpine-release ]; then
-        if command -v rc-service >/dev/null 2>&1 || [ -f /sbin/openrc-run ]; then
-            echo "openrc"
-            return
-        fi
-    fi
-
-    # Get PID 1 process for other detection
-    local pid1_process=$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ')
-
-    # If PID 1 is systemd, use systemd
-    if [ "$pid1_process" = "systemd" ] || [ -d /run/systemd/system ]; then
-        if command -v systemctl >/dev/null 2>&1; then
-            # Additional verification that systemd is actually functioning
-            if systemctl list-units >/dev/null 2>&1; then
-                echo "systemd"
-                return
-            fi
-        fi
-    fi
-
-    # Check for Gentoo OpenRC (PID 1 is openrc-init)
-    if [ "$pid1_process" = "openrc-init" ]; then
-        if command -v rc-service >/dev/null 2>&1; then
-            echo "openrc"
-            return
-        fi
-    fi
-
-    # Check for other OpenRC systems (not Alpine, already handled)
-    # Some systems use traditional init with OpenRC
-    if [ "$pid1_process" = "init" ] && [ ! -f /etc/alpine-release ]; then
-        # Check if OpenRC is actually managing services
-        if [ -d /run/openrc ] && command -v rc-service >/dev/null 2>&1; then
-            echo "openrc"
-            return
-        fi
-        # Check for OpenRC files
-        if [ -f /sbin/openrc ] && command -v rc-service >/dev/null 2>&1; then
-            echo "openrc"
-            return
-        fi
-    fi
-
-    # Check for OpenWrt's procd
-    if command -v uci >/dev/null 2>&1 && [ -f /etc/rc.common ]; then
-        echo "procd"
-        return
-    fi
-
-    # Check for macOS launchd
-    if [ "$os_name" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
-        echo "launchd"
-        return
-    fi
-
-    # Fallback: if systemctl exists and appears functional, assume systemd
-    if command -v systemctl >/dev/null 2>&1; then
-        if systemctl list-units >/dev/null 2>&1; then
-            echo "systemd"
-            return
-        fi
-    fi
-
-    # Last resort: check for OpenRC without other indicators
-    if command -v rc-service >/dev/null 2>&1 && [ -d /etc/init.d ]; then
-        echo "openrc"
-        return
-    fi
-
-    # check for Upstart (CentOS 6)
-    if command -v initctl >/dev/null 2>&1 && [ -d /etc/init ]; then
-        echo "upstart"
-        return
-    fi
-
-    echo "unknown"
+    {
+        printf '#!%s\n' "$interpreter"
+        cat <<'KOMARI_MANUAL'
+set -eu
+umask 077
+cd -- "$(dirname -- "$0")"
+pid_file=./komari-agent.pid
+log_file=./komari-agent.log
+process_stamp() {
+    # The stat suffix after the last ") " starts at field 3 (state).
+    # Field 22 identifies this process even if a PID is reused.
+    case "$1" in ''|*[!0-9]*|0|1) return 1 ;; esac
+    stamp_line=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+    printf '%s\n' "${stamp_line##*) }" | awk 'NF >= 20 && $1 != "Z" {print $20; found=1} END {exit !found}'
 }
 
-init_system=$(detect_init_system)
-if [ "$user_service" = true ]; then
-    init_system="systemd-user"
+lock_dir=./.komari-agent.lock
+lock_owner=$lock_dir/owner
+acquire_lock() {
+    if mkdir "$lock_dir" 2>/dev/null; then
+        lock_started=$(process_stamp "$$") || { rmdir "$lock_dir"; return 1; }
+        printf '%s %s\n' "$$" "$lock_started" > "$lock_owner" || { rmdir "$lock_dir"; return 1; }
+        return 0
+    fi
+
+    lock_pid=''
+    lock_expected=''
+    if [ -r "$lock_owner" ]; then
+        read -r lock_pid lock_expected < "$lock_owner" || :
+    fi
+    lock_legacy=false
+    case "$lock_pid" in ''|*[!0-9]*|0|1) lock_pid='' ;; esac
+    case "$lock_expected" in ''|*[!0-9]*) lock_expected='' ;; esac
+    if [ -z "$lock_pid" ] || [ -z "$lock_expected" ]; then
+        # Older launchers left an empty directory lock. Reclaim it only after
+        # a full minute, which is longer than the launcher's stop wait window.
+        lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null || stat -f %m "$lock_dir" 2>/dev/null || echo '')
+        lock_now=$(date +%s)
+        case "$lock_mtime:$lock_now" in *[!0-9:]*) lock_mtime='' ;; esac
+        if [ -z "$lock_mtime" ] || [ $((lock_now - lock_mtime)) -lt 60 ]; then
+            echo "Another Komari start or stop is in progress (legacy lock has not expired)." >&2
+            return 1
+        fi
+        lock_legacy=true
+        lock_pid='legacy'
+        lock_expected=$lock_mtime
+    else
+        lock_current=$(process_stamp "$lock_pid" 2>/dev/null) || lock_current=''
+        if [ -n "$lock_current" ] && [ "$lock_current" = "$lock_expected" ]; then
+            echo "Another Komari start or stop is in progress (PID $lock_pid)." >&2
+            return 1
+        fi
+    fi
+
+    # Move the stale directory out of the canonical name before deleting it.
+    # Recheck its owner after the rename so a concurrent replacement is kept.
+    stale_lock="${lock_dir}.stale.$$"
+    if ! mv "$lock_dir" "$stale_lock" 2>/dev/null; then
+        echo "Another Komari start or stop is in progress." >&2
+        return 1
+    fi
+    stale_pid=''
+    stale_expected=''
+    if [ -r "$stale_lock/owner" ]; then read -r stale_pid stale_expected < "$stale_lock/owner" || :; fi
+    if [ "$lock_legacy" = true ] && [ ! -e "$stale_lock/owner" ]; then
+        stale_mtime=$(stat -c %Y "$stale_lock" 2>/dev/null || stat -f %m "$stale_lock" 2>/dev/null || echo '')
+        [ "$stale_mtime" = "$lock_expected" ] || { mv "$stale_lock" "$lock_dir" 2>/dev/null || :; echo "Another Komari start or stop is in progress." >&2; return 1; }
+    elif [ "$stale_pid" != "$lock_pid" ] || [ "$stale_expected" != "$lock_expected" ]; then
+        mv "$stale_lock" "$lock_dir" 2>/dev/null || :
+        echo "Another Komari start or stop is in progress." >&2
+        return 1
+    fi
+    [ ! -e "$stale_lock/owner" ] || rm -f -- "$stale_lock/owner" || return 1
+    rmdir "$stale_lock" || return 1
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+        echo "Another Komari start or stop is in progress." >&2
+        return 1
+    fi
+    lock_started=$(process_stamp "$$") || { rmdir "$lock_dir"; return 1; }
+    printf '%s %s\n' "$$" "$lock_started" > "$lock_owner" || { rmdir "$lock_dir"; return 1; }
+}
+if ! acquire_lock; then exit 1; fi
+trap 'rm -f -- "$lock_owner"; rmdir "$lock_dir" 2>/dev/null || :' EXIT
+trap 'exit 1' HUP INT TERM
+
+agent_is_running() {
+    [ -r "$pid_file" ] && read -r pid started < "$pid_file" &&
+        [ -n "$started" ] && [ "$(process_stamp "$pid")" = "$started" ]
+}
+
+if [ "${1:-}" = --stop ]; then
+    if agent_is_running; then
+        kill "$pid" || exit 1
+        for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            agent_is_running || break
+            sleep 1
+        done
+        if agent_is_running; then
+            echo "Komari Agent PID $pid did not stop." >&2
+            exit 1
+        fi
+    fi
+    rm -f -- "$pid_file"
+    echo "Komari Agent stopped."
+    exit 0
 fi
-log_info "Detected init system: ${GREEN}$init_system${NC}"
+if agent_is_running; then
+    printf 'Komari Agent already running. PID %s, log %s/%s\n' "$pid" "$PWD" "komari-agent.log"
+    exit 0
+fi
+: >> "$log_file"
+chmod 600 "$log_file"
+KOMARI_MANUAL
+        printf 'nohup ./agent%s >> "$log_file" 2>&1 < /dev/null &\n' "$komari_manual_args"
+        cat <<'KOMARI_MANUAL'
+pid=$!
+if ! started=$(process_stamp "$pid"); then
+    echo "Komari Agent exited during startup. See $PWD/komari-agent.log." >&2
+    exit 1
+fi
+printf '%s %s\n' "$pid" "$started" > "$pid_file"
+sleep 1
+if ! agent_is_running; then
+    rm -f -- "$pid_file"
+    echo "Komari Agent exited during startup. See $PWD/komari-agent.log." >&2
+    exit 1
+fi
+printf 'Komari Agent running. PID %s, log %s/%s\n' "$pid" "$PWD" "komari-agent.log"
+KOMARI_MANUAL
+    } > "$tmp/start-komari-agent.sh"
+    {
+        printf '#!%s\n' "$interpreter"
+        printf '%s\n' 'exec "$(dirname -- "$0")/start-komari-agent.sh" --stop'
+    } > "$tmp/stop-komari-agent.sh"
+    chmod 700 "$tmp/start-komari-agent.sh" "$tmp/stop-komari-agent.sh"
+    mv -f -- "$tmp/start-komari-agent.sh" "$tmp/stop-komari-agent.sh" "$target_dir/"
+)
 
 # Handle each init system
 if [ "$init_system" = "nixos" ]; then
@@ -709,6 +1234,9 @@ if [ "$init_system" = "nixos" ]; then
     log_info "Replace PRIVATE_AGENT_ARGUMENTS locally with your endpoint and token before rebuilding; private arguments are not printed."
     log_info "Then run: sudo nixos-rebuild switch"
     log_warning "Service not started automatically on NixOS. Please rebuild your configuration."
+elif [ "$init_system" = manual ]; then
+    install_manual_launchers || { rollback_install; exit 1; }
+    "$target_dir/start-komari-agent.sh" || { rollback_install; exit 1; }
 elif [ "$init_system" = "openrc" ]; then
     # OpenRC service configuration
     log_info "Using OpenRC for service management"
@@ -741,8 +1269,9 @@ elif [ "$init_system" = "systemd-user" ]; then
     log_info "Using systemd user service management"
     service_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
     service_file="${service_dir}/${service_name}.service"
-    mkdir -p "$service_dir"
-    cat > "$service_file" << EOF
+    mkdir -p "$service_dir" || { rollback_install; exit 1; }
+    service_tmp=$(mktemp "${service_dir}/.${service_name}.service.XXXXXX") || { rollback_install; exit 1; }
+    cat > "$service_tmp" << EOF
 [Unit]
 Description=Komari Agent Service
 After=network.target
@@ -756,15 +1285,19 @@ Restart=always
 [Install]
 WantedBy=default.target
 EOF
-    chmod 600 "$service_file"
-    systemctl --user daemon-reload
-    systemctl --user enable --now "${service_name}.service"
+    if [ "$?" -ne 0 ]; then rm -f -- "$service_tmp"; rollback_install; exit 1; fi
+    chmod 600 "$service_tmp" && mv -f "$service_tmp" "$service_file" || { rm -f -- "$service_tmp"; rollback_install; exit 1; }
+    systemctl --user daemon-reload || { rollback_install; exit 1; }
+    systemctl --user enable "${service_name}.service" || { rollback_install; exit 1; }
+    systemctl --user start "${service_name}.service" || { rollback_install; exit 1; }
+    systemctl --user is-active --quiet "${service_name}.service" || { rollback_install; exit 1; }
     log_success "Systemd user service configured and started"
 elif [ "$init_system" = "systemd" ]; then
     # Systemd service configuration
     log_info "Using systemd for service management"
     service_file="/etc/systemd/system/${service_name}.service"
-    cat > "$service_file" << EOF
+    service_tmp=$(mktemp "/etc/systemd/system/.${service_name}.service.XXXXXX") || { rollback_install; exit 1; }
+    cat > "$service_tmp" << EOF
 [Unit]
 Description=Komari Agent Service
 After=network.target
@@ -779,12 +1312,14 @@ User=${service_user}
 [Install]
 WantedBy=multi-user.target
 EOF
+    if [ "$?" -ne 0 ]; then rm -f -- "$service_tmp"; rollback_install; exit 1; fi
 
     # Reload systemd and start service
-    chmod 600 "$service_file"
-    systemctl daemon-reload
-    systemctl enable ${service_name}.service
-    systemctl start ${service_name}.service
+    chmod 600 "$service_tmp" && mv -f "$service_tmp" "$service_file" || { rm -f -- "$service_tmp"; rollback_install; exit 1; }
+    systemctl daemon-reload || { rollback_install; exit 1; }
+    systemctl enable "${service_name}.service" || { rollback_install; exit 1; }
+    systemctl start "${service_name}.service" || { rollback_install; exit 1; }
+    systemctl is-active --quiet "${service_name}.service" || { rollback_install; exit 1; }
     log_success "Systemd service configured and started"
 elif [ "$init_system" = "procd" ]; then
     # procd service configuration (OpenWrt)
@@ -951,7 +1486,7 @@ fi
 
 echo ""
 echo -e "${WHITE}===========================================${NC}"
-if [ -f /etc/NIXOS ]; then
+if [ "$init_system" = nixos ]; then
     log_success "Komari-agent binary installed!"
     log_warning "NixOS requires declarative service configuration."
     log_info "Please add the service configuration to your NixOS config and rebuild."
@@ -961,6 +1496,7 @@ fi
 log_config "Service: ${GREEN}$service_name${NC}"
 log_config "Arguments: (not displayed; may contain Client Token)"
 echo -e "${WHITE}===========================================${NC}"
-if [ ! -f /etc/NIXOS ]; then
-    komari_install_status || exit 1
+if [ "$init_system" != nixos ] && [ "$init_system" != manual ]; then
+    komari_install_status || { rollback_install; exit 1; }
 fi
+rm -rf -- "$rollback_dir"

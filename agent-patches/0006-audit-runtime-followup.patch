@@ -1,0 +1,272 @@
+diff --git a/cmd/root.go b/cmd/root.go
+index c7d45733d149b8d4e5055e79d40109400e9fcd5e..ff77c4b84cb824199c66c285bfdd679a0ccef552 100644
+--- a/cmd/root.go
++++ b/cmd/root.go
+@@ -6,6 +6,7 @@ import (
+ 	"encoding/json"
+ 	"fmt"
+ 	"log"
++	"math"
+ 	"net/http"
+ 	"os"
+ 	"os/signal"
+@@ -14,6 +15,7 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"syscall"
++	"time"
+ 
+ 	"github.com/komari-monitor/komari-agent/dnsresolver"
+ 	"github.com/komari-monitor/komari-agent/monitoring/netstatic"
+@@ -60,6 +62,9 @@ var RootCmd = &cobra.Command{
+ 		if flags.PreferIPVersion != "" && flags.PreferIPVersion != "4" && flags.PreferIPVersion != "6" {
+ 			return fmt.Errorf("invalid --prefer-ip-version value %q: expected 4 or 6", flags.PreferIPVersion)
+ 		}
++		if err := validateReportIntervals(flags); err != nil {
++			return err
++		}
+ 		// 捕获中止信号，优雅退出
+ 		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+ 		defer stop()
+@@ -169,6 +174,19 @@ func Execute() {
+ 	}
+ }
+ 
++func validateReportIntervals(cfg *pkg_flags.Config) error {
++	if cfg.InfoReportInterval <= 0 || int64(cfg.InfoReportInterval) > int64(math.MaxInt64/time.Minute) {
++		return fmt.Errorf("invalid --info-report-interval: expected a positive duration in minutes")
++	}
++	if cfg.ReconnectInterval <= 0 || int64(cfg.ReconnectInterval) > int64(math.MaxInt64/time.Second) {
++		return fmt.Errorf("invalid --reconnect-interval: expected a positive duration in seconds")
++	}
++	if cfg.Interval <= 0 || math.IsNaN(cfg.Interval) || cfg.Interval >= float64(math.MaxInt64)/float64(time.Second) {
++		return fmt.Errorf("invalid --interval: expected a finite positive duration in seconds")
++	}
++	return nil
++}
++
+ func defaultReportInterval(arch string) float64 {
+ 	switch arch {
+ 	case "arm", "arm64":
+diff --git a/cmd/runtime_test.go b/cmd/runtime_test.go
+index b4eb9d09e12ab47cf819c3a23a6beccbbb6cee2a..a2694f55295b409710ec58abd4a7018f6fe6593c 100644
+--- a/cmd/runtime_test.go
++++ b/cmd/runtime_test.go
+@@ -1,7 +1,10 @@
+ package cmd
+ 
+ import (
++	"math"
+ 	"testing"
++
++	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
+ )
+ 
+ func TestReportIntervalDefaults(t *testing.T) {
+@@ -22,3 +25,23 @@ func TestReportIntervalDefaults(t *testing.T) {
+ 		t.Fatalf("AGENT_INTERVAL override lost: %v", flags.Interval)
+ 	}
+ }
++
++func TestValidateReportIntervals(t *testing.T) {
++	valid := pkg_flags.Config{InfoReportInterval: 5, ReconnectInterval: 5, Interval: 3}
++	if err := validateReportIntervals(&valid); err != nil {
++		t.Fatal(err)
++	}
++	for _, edit := range []func(*pkg_flags.Config){
++		func(c *pkg_flags.Config) { c.InfoReportInterval = 0 },
++		func(c *pkg_flags.Config) { c.ReconnectInterval = -1 },
++		func(c *pkg_flags.Config) { c.Interval = 0 },
++		func(c *pkg_flags.Config) { c.Interval = math.NaN() },
++		func(c *pkg_flags.Config) { c.Interval = math.Inf(1) },
++	} {
++		input := valid
++		edit(&input)
++		if err := validateReportIntervals(&input); err == nil {
++			t.Fatalf("invalid intervals accepted: %+v", input)
++		}
++	}
++}
+diff --git a/monitoring/monitoring.go b/monitoring/monitoring.go
+index fad27793a7899a98d14191bcababa1f0855d8519..abda23bfa5db91fb9134805f718e22d7ad8bfeab 100644
+--- a/monitoring/monitoring.go
++++ b/monitoring/monitoring.go
+@@ -147,13 +147,18 @@ func GenerateReport() []byte {
+ 	}
+ 	// 基础模式下，GPU信息已在basicInfo中处理
+ 
++	if unit.ContainerResourceScope() {
++		message += "resource_scope=container\n"
++	}
+ 	if unit.LoadIsUnisolated() {
+ 		data.ResourceScope["load"] = "unknown"
++		data.ResourceScope["load_status"] = "unknown"
+ 		message += "load is host-wide and not container-isolated; omitted.\n"
+ 	}
+ 	if disk.Status != "" {
+-		data.ResourceScope["disk_used"] = disk.Status
++		data.ResourceScope["disk_used_status"] = disk.Status
+ 		data.ResourceScope["disk_total"] = "unknown"
++		data.ResourceScope["disk_total_status"] = "unknown"
+ 		message += "disk quota unknown; rootfs used=" + disk.Status + ".\n"
+ 	}
+ 	if unit.ContainerResourceScope() || unit.IsAndroid() {
+diff --git a/server/switch_version.go b/server/switch_version.go
+index ce77e7591f3d2d093cbc0a3f830d323708384ad6..037a29eca28b4cd9ec07d963abf986482b3daf03 100644
+--- a/server/switch_version.go
++++ b/server/switch_version.go
+@@ -8,14 +8,18 @@ import (
+ )
+ 
+ func switchAgentVersion(version string, onRestartRequired func()) {
+-	if flags.DisableWebSsh {
+-		log.Print("Ignoring v2 switch version request because remote control is disabled")
+-		return
+-	}
+ 	runSwitchVersion(version, update.CheckAndUpdateForVersionLine, onRestartRequired)
+ }
+ 
+ func runSwitchVersion(version string, check func(string) error, onRestartRequired func()) {
++	if flags.DisableAutoUpdate {
++		log.Print("Ignoring v2 switch version request because updates are disabled")
++		return
++	}
++	if flags.DisableWebSsh {
++		log.Print("Ignoring v2 switch version request because remote control is disabled")
++		return
++	}
+ 	err := check(version)
+ 	if errors.Is(err, update.ErrRestartRequired) {
+ 		log.Printf("Agent version switch to %q installed; restarting", version)
+diff --git a/server/switch_version_test.go b/server/switch_version_test.go
+index 0c7191c0d758e000121e333d122be9ea65880091..40a8378097bf7350755087044c8d9763e7c87f19 100644
+--- a/server/switch_version_test.go
++++ b/server/switch_version_test.go
+@@ -40,3 +40,14 @@ func TestRunSwitchVersion(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestSwitchVersionRespectsDisabledUpdates(t *testing.T) {
++	original := *flags
++	t.Cleanup(func() { *flags = original })
++	flags.DisableAutoUpdate = true
++	flags.DisableWebSsh = false
++	runSwitchVersion("fixture-version", func(string) error {
++		t.Fatal("disabled update reached the updater")
++		return nil
++	}, func() { t.Fatal("disabled update requested restart") })
++}
+diff --git a/server/task.go b/server/task.go
+index 22c1f0d45887051a7834872c092554679b5bedd9..8770b5b765342c85abbeea89fa228651b83d155e 100644
+--- a/server/task.go
++++ b/server/task.go
+@@ -11,6 +11,7 @@ import (
+ 	"log"
+ 	"net"
+ 	"net/http"
++	"net/url"
+ 	"os"
+ 	"os/exec"
+ 	"runtime"
+@@ -256,6 +257,10 @@ func tcpPing(target string, timeout time.Duration) (int64, error) {
+ }
+ 
+ func httpPing(target string, timeout time.Duration) (int64, error) {
++	return httpPingWithResolver(target, timeout, resolveIP)
++}
++
++func httpPingWithResolver(target string, timeout time.Duration, lookup func(context.Context, string) (string, error)) (int64, error) {
+ 	// Handle raw IPv6 address for URL
+ 	if strings.Contains(target, ":") && !strings.Contains(target, "[") {
+ 		// check if it's a valid IP to avoid wrapping hostnames
+@@ -268,6 +273,22 @@ func httpPing(target string, timeout time.Duration) (int64, error) {
+ 		target = "http://" + target
+ 	}
+ 
++	endpoint, err := url.Parse(target)
++	if err != nil {
++		return -1, err
++	}
++	if endpoint.Hostname() == "" {
++		return -1, errors.New("HTTP probe target has no hostname")
++	}
++	// The first resolution gets its full DNS budget. The HTTP timeout then
++	// starts with the network request, keeping DNS out of probe latency.
++	lookupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
++	ip, err := lookup(lookupCtx, endpoint.Hostname())
++	cancel()
++	if err != nil {
++		return -1, err
++	}
++
+ 	transport := &http.Transport{
+ 		DisableKeepAlives: true,
+ 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+@@ -276,11 +297,14 @@ func httpPing(target string, timeout time.Duration) (int64, error) {
+ 			if err != nil {
+ 				return nil, err
+ 			}
+-			ip, err := resolveIP(ctx, host)
+-			if err != nil {
+-				return nil, err
++			resolved := ip
++			if !strings.EqualFold(host, endpoint.Hostname()) {
++				resolved, err = lookup(ctx, host)
++				if err != nil {
++					return nil, err
++				}
+ 			}
+-			return net.DialTimeout(network, net.JoinHostPort(ip, port), timeout)
++			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(resolved, port))
+ 		},
+ 	}
+ 	defer transport.CloseIdleConnections()
+diff --git a/server/task_probe_test.go b/server/task_probe_test.go
+index 2cea9b45a34af2e597791dbb3280de62d61f7471..56c06e26366f8df3f8a143cba938f4e4c3d51766 100644
+--- a/server/task_probe_test.go
++++ b/server/task_probe_test.go
+@@ -5,6 +5,9 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"net"
++	"net/http"
++	"net/http/httptest"
++	"strings"
+ 	"os"
+ 	"reflect"
+ 	"syscall"
+@@ -92,3 +95,33 @@ func TestTaskDeadlineAndProbeNetwork(t *testing.T) {
+ 		}
+ 	})
+ }
++
++func TestTaskDeadlineSeparatesInitialDNSFromHTTP(t *testing.T) {
++	hosts := make(chan string, 1)
++	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
++		hosts <- request.Host
++		w.WriteHeader(http.StatusNoContent)
++	}))
++	defer web.Close()
++	target := strings.Replace(web.URL, "127.0.0.1", "probe.test", 1)
++	timeout := 200 * time.Millisecond
++	delay := 2 * timeout
++	_, err := httpPingWithResolver(target, timeout, func(ctx context.Context, name string) (string, error) {
++		if name != "probe.test" {
++			return "", fmt.Errorf("unexpected DNS name: %s", name)
++		}
++		deadline, ok := ctx.Deadline()
++		if !ok || time.Until(deadline) < delay {
++			return "", errors.New("DNS inherited the HTTP deadline")
++		}
++		return "127.0.0.1", nil
++	})
++	host := ""
++	select {
++	case host = <-hosts:
++	default:
++	}
++	if err != nil || !strings.HasPrefix(host, "probe.test:") {
++		t.Fatalf("HTTP probe lost origin host or failed: host=%q err=%v", host, err)
++	}
++}

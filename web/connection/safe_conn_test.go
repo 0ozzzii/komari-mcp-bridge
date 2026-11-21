@@ -309,3 +309,38 @@ func TestSafeConnOnCloseOnce(t *testing.T) {
 		t.Fatalf("OnClose fired %d times", closes)
 	}
 }
+
+func TestSafeConnLimitsDecodedMessagesBeforeHooks(t *testing.T) {
+	const limit = 128
+	upgrader := websocket.Upgrader{EnableCompression: true}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("small fixture"))
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(strings.Repeat("fixture", 64)))
+	}))
+	defer server.Close()
+	dialer := websocket.Dialer{EnableCompression: true}
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := NewSafeConn(conn)
+	defer sc.Close()
+	sc.SetReadLimit(limit)
+	rec := &recordingInterceptor{}
+	sc.SetInterceptor(&ConnInfo{ID: sc.ID}, rec)
+	if _, body, err := sc.ReadMessage(); err != nil || string(body) != "small fixture" {
+		t.Fatalf("normal message failed: %q %v", body, err)
+	}
+	if _, _, err := sc.ReadMessage(); !errors.Is(err, websocket.ErrReadLimit) {
+		t.Fatalf("oversized message: %v", err)
+	}
+	_, received, _, _ := rec.calls()
+	if len(received) != 1 {
+		t.Fatalf("oversized decoded message reached hook: got %d calls", len(received))
+	}
+}

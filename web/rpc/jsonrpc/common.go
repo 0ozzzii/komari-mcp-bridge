@@ -284,6 +284,22 @@ func getPublicInfo(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcE
 	return info, nil
 }
 
+// Reports from earlier agents used a textual scope marker. Keep known disk
+// capacity when an explicit filesystem was supplied by that agent.
+func reportResourceScope(rep *v2.Report) map[string]string {
+	if len(rep.ResourceScope) > 0 {
+		return rep.ResourceScope
+	}
+	if !strings.Contains(rep.Message, "resource_scope=container") {
+		return nil
+	}
+	scope := map[string]string{"mode": "container", "load_status": "unknown"}
+	if rep.Disk.Total == 0 {
+		scope["disk_total_status"] = "unknown"
+	}
+	return scope
+}
+
 func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	var params struct {
 		UUID  string   `json:"uuid"`
@@ -343,6 +359,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		Temp            float32             `json:"temp"`
 		Disk            int64               `json:"disk"`
 		DiskTotal       int64               `json:"disk_total"`
+		ResourceScope   map[string]string   `json:"resource_scope,omitempty"`
 		NetIn           int64               `json:"net_in"`
 		NetOut          int64               `json:"net_out"`
 		NetTotalUp      int64               `json:"net_total_up"`
@@ -380,6 +397,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			Temp:           0,
 			Disk:           rep.Disk.Used,
 			DiskTotal:      rep.Disk.Total,
+			ResourceScope:  reportResourceScope(rep),
 			NetIn:          rep.Network.Down,
 			NetOut:         rep.Network.Up,
 			NetTotalUp:     rep.Network.TotalUp,
@@ -524,6 +542,7 @@ func getNodeRecentStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rp
 		Temp           float32   `json:"temp"`
 		Disk           int64     `json:"disk"`
 		DiskTotal      int64     `json:"disk_total"`
+		ResourceScope  map[string]string `json:"resource_scope,omitempty"`
 		NetIn          int64     `json:"net_in"`
 		NetOut         int64     `json:"net_out"`
 		NetTotalUp     int64     `json:"net_total_up"`
@@ -560,6 +579,7 @@ func getNodeRecentStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rp
 			Temp:           0,
 			Disk:           r.Disk.Used,
 			DiskTotal:      r.Disk.Total,
+			ResourceScope:  reportResourceScope(&r),
 			NetIn:          r.Network.Down,
 			NetOut:         r.Network.Up,
 			NetTotalUp:     r.Network.TotalUp,

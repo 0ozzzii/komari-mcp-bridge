@@ -2,9 +2,11 @@ package jsonrpc
 
 import (
 	"context"
+	"strings"
 
 	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/internal/metricstore"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/pkg/rpc"
@@ -15,7 +17,10 @@ import (
 // client 资源的 RPC2 方法（admin 命名空间）。承载原 web/api/admin/client.go 的业务逻辑，
 // 包含审计日志与运行时副作用。传统 REST handler 经 CallFromGin 转调这些方法。
 
+const clientTokenMethod = "admin:getClientToken"
+
 func init() {
+	rpc.MarkSensitive(clientTokenMethod)
 	RegisterWithGroupAndMeta("addClient", rpc.RoleAdmin, adminAddClient, &rpc.MethodMeta{
 		Name:    "admin:addClient",
 		Summary: "Create a new client",
@@ -54,7 +59,7 @@ func init() {
 		Returns: "Client[]",
 	})
 	RegisterWithGroupAndMeta("getClientToken", rpc.RoleAdmin, adminGetClientToken, &rpc.MethodMeta{
-		Name:    "admin:getClientToken",
+		Name:    clientTokenMethod,
 		Summary: "Get a client's token by UUID",
 		Params: []rpc.ParamMeta{
 			{Name: "uuid", Type: "string", Required: true, Description: "Client UUID"},
@@ -111,6 +116,11 @@ func adminEditClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Js
 	if uuid == "" {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid or missing UUID", nil)
 	}
+	for field := range update {
+		if strings.EqualFold(field, "token") {
+			return nil, rpc.MakeError(rpc.InvalidParams, "Client tokens cannot be changed through client edits", nil)
+		}
+	}
 	if err := clients.SaveClient(update); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
@@ -138,6 +148,16 @@ func adminRemoveClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	return nil, nil
 }
 
+// Clear the token on a copy before handing the model to the transport.
+type adminClientView struct {
+	models.Client
+}
+
+func clientView(client models.Client) adminClientView {
+	client.Token = ""
+	return adminClientView{Client: client}
+}
+
 func adminGetClient(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	var params struct {
 		UUID string `json:"uuid"`
@@ -150,7 +170,7 @@ func adminGetClient(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonR
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
-	return result, nil
+	return clientView(result), nil
 }
 
 func adminListClients(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -158,10 +178,19 @@ func adminListClients(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonR
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
-	return cls, nil
+	result := make([]adminClientView, 0, len(cls))
+	for _, client := range cls {
+		result = append(result, clientView(client))
+	}
+	return result, nil
 }
 
-func adminGetClientToken(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+type clientTokenVerifiedKey struct{}
+
+func adminGetClientToken(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if ctx.Value(clientTokenVerifiedKey{}) != true {
+		return nil, rpc.MakeError(rpc.PermissionDenied, "A verified user session is required", nil)
+	}
 	var params struct {
 		UUID string `json:"uuid"`
 	}

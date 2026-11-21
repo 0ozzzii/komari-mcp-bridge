@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -114,10 +115,14 @@ def verify_assets(directory, config, version, commit):
         if record["sha256"] != checks[record["name"]] or record["size"] != (directory / record["name"]).stat().st_size:
             raise ValueError("Manifest asset mismatch: " + record["name"])
     # Support text is eligible for publication only after the same credential scan.
-    findings = scanner.findings(directory, sorted(SUPPORT_FILES), ())
+    findings = scanner.findings(directory, sorted(SUPPORT_FILES), environment_forbidden_hosts())
     if findings:
         raise ValueError("Public support-file text scan rejected paths: " + str(findings))
     return {"version": version, "commit": commit, "verified_assets": len(expected)}
+
+
+def environment_forbidden_hosts():
+    return [host.strip() for host in os.environ.get("PUBLIC_FORBIDDEN_HOSTS", "").split(",") if host.strip()]
 
 
 if __name__ == "__main__":
@@ -134,7 +139,7 @@ if __name__ == "__main__":
     verify.add_argument("--config", default=str(ROOT / "release/config.json"))
     args = parser.parse_args()
     if args.action == "export":
-        result = export_source(ROOT, args.commit, args.directory, args.forbidden_host)
+        result = export_source(ROOT, args.commit, args.directory, args.forbidden_host + environment_forbidden_hosts())
         result = {key: result[key] for key in ("source_repository", "source_commit", "distribution_repository")}
     else:
         result = verify_assets(args.directory, json.loads(Path(args.config).read_text()), args.version, args.commit)

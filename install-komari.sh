@@ -32,13 +32,14 @@ komari_fetch_verified() (
     komari_url=$1
     komari_dest=$2
     komari_name=${komari_url##*/}
-    komari_dir=$(mktemp -d "${komari_dest}.download.XXXXXX")
-    trap 'rm -rf -- "$komari_dir"' EXIT HUP INT TERM
-    curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 "$komari_url" -o "$komari_dir/binary"
-    test -s "$komari_dir/binary"
-    curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 "${komari_url%/*}/sha256sums.txt" -o "$komari_dir/manifest"
-    komari_expected=$(awk -v n="$komari_name" '$2 == n || $2 == "*" n {print $1; count++} END {if(count!=1) exit 1}' "$komari_dir/manifest")
-    printf '%s\n' "$komari_expected" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{64}$'
+    komari_dir=$(mktemp -d "${komari_dest}.download.XXXXXX") || exit 1
+    trap 'rm -rf -- "$komari_dir"' EXIT
+    trap 'exit 1' HUP INT TERM
+    curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 "$komari_url" -o "$komari_dir/binary" || exit 1
+    test -s "$komari_dir/binary" || exit 1
+    curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 "${komari_url%/*}/sha256sums.txt" -o "$komari_dir/manifest" || exit 1
+    komari_expected=$(awk -v n="$komari_name" '$2 == n || $2 == "*" n {print $1; count++} END {if(count!=1) exit 1}' "$komari_dir/manifest") || exit 1
+    printf '%s\n' "$komari_expected" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{64}$' || exit 1
     if command -v sha256sum >/dev/null 2>&1; then
         komari_actual=$(sha256sum "$komari_dir/binary" | awk '{print $1}')
     elif command -v shasum >/dev/null 2>&1; then
@@ -49,7 +50,7 @@ komari_fetch_verified() (
         echo 'SHA256 verification requires sha256sum, shasum or openssl' >&2; exit 1
     fi
     test "$(printf '%s' "$komari_expected" | tr A-F a-f)" = "$komari_actual" || { echo 'Release checksum mismatch; existing installation preserved' >&2; exit 1; }
-    chmod 755 "$komari_dir/binary"
+    chmod 755 "$komari_dir/binary" || exit 1
     mv -f "$komari_dir/binary" "$komari_dest"
 )
 # END KOMARI RELEASE DOWNLOAD
@@ -1288,42 +1289,54 @@ upgrade_komari() {
         ui_msgbox "$(msg title_error)" "$(msg download_failed)"
         return 1
     fi
-    log_step "$(msg stopping_service)"
-    if ! systemctl stop "${SERVICE_NAME}.service"; then rm -f "$candidate"; return 1; fi
-
-    log_step "$(msg clearing_backups)"
-    rm -f -- "${BINARY_PATH}.backup."*
-
-    local backup_path="${BINARY_PATH}.backup.$(date +%Y%m%d_%H%M%S)"
+    local unit="$SERVICE_NAME.service" was_active=false backup_path restore_path
+    if systemctl is-active --quiet "$unit"; then
+        was_active=true
+    fi
+    backup_path=$(mktemp "${BINARY_PATH}.backup.$(date +%Y%m%d_%H%M%S).XXXXXX") || { rm -f "$candidate"; return 1; }
     progress_add "$(msg progress_backup)"
     log_step "$(msg backing_up)"
-    if ! cp "$BINARY_PATH" "$backup_path"; then
-        log_error "$(msg backup_failed_log)"
-        rm -f "$candidate"
-        systemctl start ${SERVICE_NAME}.service
+    if ! cp -p "$BINARY_PATH" "$backup_path"; then
+        rm -f -- "$candidate" "$backup_path"
         ui_msgbox "$(msg title_error)" "$(msg backup_failed)"
         return 1
     fi
 
+    log_step "$(msg stopping_service)"
+    if ! systemctl stop "$unit"; then
+        rm -f "$candidate"
+        return 1
+    fi
     if ! mv -f "$candidate" "$BINARY_PATH"; then
         rm -f "$candidate"
-        cp -p "$backup_path" "$BINARY_PATH"
-        systemctl start "${SERVICE_NAME}.service"
+        if [ "$was_active" = true ]; then systemctl start "$unit"; fi
         return 1
     fi
 
-    chmod +x "$BINARY_PATH"
-
     progress_add "$(msg progress_restart)"
     log_step "$(msg restart_start)"
-    systemctl start ${SERVICE_NAME}.service
-
-    if systemctl is-active --quiet ${SERVICE_NAME}.service; then
+    if systemctl start "$unit" && systemctl is-active --quiet "$unit"; then
         progress_add "$(msg progress_complete)"
         ui_msgbox "$(msg title_upgrade_complete)" "$(msg upgrade_success "$EDITION_NAME" "$CHANNEL_NAME")"
-    else
-        ui_msgbox "$(msg title_error)" "$(msg upgrade_start_failed)"
+        return 0
     fi
+
+    # Keep the previous unit untouched. Restore its executable atomically.
+    systemctl stop "$unit" || return 1
+    restore_path=$(mktemp "$INSTALL_DIR/.komari-restore.XXXXXX") || return 1
+    if ! cp -p "$backup_path" "$restore_path" || ! mv -f "$restore_path" "$BINARY_PATH"; then
+        rm -f "$restore_path"
+        log_error "Could not restore previous binary from $backup_path"
+        return 1
+    fi
+    if [ "$was_active" = true ]; then
+        systemctl start "$unit" && systemctl is-active --quiet "$unit" || {
+            log_error "Previous binary was restored, but the service did not recover"
+            return 1
+        }
+    fi
+    ui_msgbox "$(msg title_error)" "$(msg upgrade_start_failed)"
+    return 1
 }
 
 # Uninstall function

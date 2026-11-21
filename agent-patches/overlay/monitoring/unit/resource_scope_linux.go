@@ -18,14 +18,21 @@ import (
 // ContainerResourceScope chooses the metric boundary, not execution privileges.
 // HOST_PROC is an existing explicit request to monitor a host mounted into Docker.
 func ContainerResourceScope() bool {
-	switch strings.ToLower(flags.ResourceScope) {
-	case "host":
+	mode := strings.ToLower(flags.ResourceScope)
+	if mode != "container" && (mode == "host" || flags.HostProc != "" || IsAndroid()) {
 		return false
-	case "container":
-		return true
-	default:
-		return flags.HostProc == "" && detectContainer() != ""
 	}
+	return mode == "container" || detectContainer() != ""
+}
+
+func cgroupMetricMode(available bool) string {
+	if available {
+		return "cgroup"
+	}
+	if strings.EqualFold(flags.ResourceScope, "container") {
+		return "cgroup-unavailable"
+	}
+	return "host-fallback"
 }
 
 type cgroupLocation struct{ dir, mount string }
@@ -370,25 +377,27 @@ func containerCPU() (int, float64, bool) {
 	}
 	r, err := currentCgroups()
 	if err != nil {
-		return 0, 0, true
+		return 0, 0, cgroupMetricMode(false) == "cgroup-unavailable"
 	}
 	capacity := r.cpuCapacity()
 	cores := int(math.Ceil(capacity))
 	cgroupCPU.Lock()
 	defer cgroupCPU.Unlock()
 	usage, group, err := r.cpuTime()
+	if err != nil {
+		cgroupCPU.at = time.Time{}
+		return 0, 0, cgroupMetricMode(false) == "cgroup-unavailable"
+	}
 	now := time.Now()
 	percentage := 0.0
-	if err == nil && group == cgroupCPU.group && !cgroupCPU.at.IsZero() && usage >= cgroupCPU.usage {
+	if group == cgroupCPU.group && !cgroupCPU.at.IsZero() && usage >= cgroupCPU.usage {
 		delta := now.Sub(cgroupCPU.at).Seconds()
 		if delta > 0 {
 			percentage = float64(usage-cgroupCPU.usage) / 1e9 / delta / capacity * 100
 			percentage = math.Min(100, math.Max(0, percentage))
 		}
 	}
-	if err == nil {
-		cgroupCPU.group, cgroupCPU.usage, cgroupCPU.at = group, usage, now
-	}
+	cgroupCPU.group, cgroupCPU.usage, cgroupCPU.at = group, usage, now
 	return cores, percentage, true
 }
 
@@ -397,54 +406,69 @@ func containerCPUCores() (int, bool) {
 		return 0, false
 	}
 	r, err := currentCgroups()
-	if err != nil {
-		return 0, true
+	if err == nil {
+		if _, _, err := r.cpuTime(); err == nil {
+			return int(math.Ceil(r.cpuCapacity())), true
+		}
 	}
-	return int(math.Ceil(r.cpuCapacity())), true
+	return 0, cgroupMetricMode(false) == "cgroup-unavailable"
 }
 
 func containerRam() (RamInfo, bool) {
 	if !ContainerResourceScope() {
 		return RamInfo{}, false
 	}
-	r, err := currentCgroups()
-	if err != nil {
-		return RamInfo{Mode: "cgroup-unavailable"}, true
+	result := RamInfo{Mode: "cgroup-unavailable"}
+	if r, err := currentCgroups(); err == nil {
+		result, _ = r.memory(flags.MemoryIncludeCache)
 	}
-	v, _ := r.memory(flags.MemoryIncludeCache)
-	return v, true
+	return result, cgroupMetricMode(result.Mode != "cgroup-unavailable") != "host-fallback"
 }
 
 func containerSwap() (RamInfo, bool) {
 	if !ContainerResourceScope() {
 		return RamInfo{}, false
 	}
-	r, err := currentCgroups()
-	if err != nil {
-		return RamInfo{Mode: "cgroup-swap-unavailable"}, true
+	result := RamInfo{Mode: "cgroup-swap-unavailable"}
+	if r, err := currentCgroups(); err == nil {
+		result = r.swap()
 	}
-	return r.swap(), true
+	return result, cgroupMetricMode(result.Mode != "cgroup-swap-unavailable") != "host-fallback"
 }
 
 func ResourceScopeInfo() map[string]string {
 	if !ContainerResourceScope() {
 		return map[string]string{"mode": "host"}
 	}
-	info := map[string]string{"mode": "container", "cpu": "cgroup-quota-and-cpuset", "memory": "cgroup-working-set", "load": "unavailable", "disk": "quota-unavailable", "uptime": "host-boot", "network": "network-namespace"}
+	info := map[string]string{
+		"mode": "container", "uptime": "agent process", "network": "network-namespace",
+		"disk": "rootfs-used-estimate",
+	}
 	if flags.IncludeMountpoints != "" {
 		info["disk"] = "explicit-filesystem-capacity-not-container-quota"
 	}
-	r, err := currentCgroups()
-	if err != nil {
-		info["warning"] = err.Error()
-		return info
+
+	var cpuAvailable, memoryAvailable, swapAvailable bool
+	var warning string
+	if r, err := currentCgroups(); err == nil {
+		_, _, cpuErr := r.cpuTime()
+		ram, reason := r.memory(flags.MemoryIncludeCache)
+		cpuAvailable = cpuErr == nil
+		memoryAvailable = ram.Mode != "cgroup-unavailable"
+		swapAvailable = r.swap().Mode != "cgroup-swap-unavailable"
+		if memoryAvailable {
+			warning = reason
+		}
 	}
-	_, warning := r.memory(flags.MemoryIncludeCache)
-	if warning != "" {
-		info["warning"] = warning
+	info["cpu"] = cgroupMetricMode(cpuAvailable)
+	info["memory"] = cgroupMetricMode(memoryAvailable)
+	info["swap"] = cgroupMetricMode(swapAvailable)
+	if !cpuAvailable || !memoryAvailable || !swapAvailable {
+		if warning != "" {
+			warning += "; "
+		}
+		warning += fmt.Sprintf("resource scope: cpu=%s, memory=%s, swap=%s", info["cpu"], info["memory"], info["swap"])
 	}
-	if _, _, err := r.cpuTime(); err != nil {
-		info["cpu"] = "unavailable"
-	}
+	info["warning"] = warning
 	return info
 }

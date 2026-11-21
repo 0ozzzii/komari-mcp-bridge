@@ -17,6 +17,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const ClientV2RequestLimit = 4 << 20
+
 const (
 	RoleAdmin  = "admin"
 	RoleClient = "client"
@@ -37,6 +39,14 @@ func IdentityMiddleware() gin.HandlerFunc {
 			c.Set("role", RoleGuest)
 			c.Next()
 			return
+		}
+		if c.Request.URL.Path == "/api/clients/v2/rpc" && c.Request.Method == http.MethodPost {
+			if c.Request.ContentLength > ClientV2RequestLimit {
+				RespondError(c, http.StatusRequestEntityTooLarge, "Agent request is too large")
+				c.Abort()
+				return
+			}
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, ClientV2RequestLimit)
 		}
 		p := IdentifyPrincipal(c)
 		SetPrincipal(c, p)

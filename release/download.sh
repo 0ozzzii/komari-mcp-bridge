@@ -30,13 +30,14 @@ komari_fetch_verified() (
     komari_url=$1
     komari_dest=$2
     komari_name=${komari_url##*/}
-    komari_dir=$(mktemp -d "${komari_dest}.download.XXXXXX")
-    trap 'rm -rf -- "$komari_dir"' EXIT HUP INT TERM
-    curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 "$komari_url" -o "$komari_dir/binary"
-    test -s "$komari_dir/binary"
-    curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 "${komari_url%/*}/sha256sums.txt" -o "$komari_dir/manifest"
-    komari_expected=$(awk -v n="$komari_name" '$2 == n || $2 == "*" n {print $1; count++} END {if(count!=1) exit 1}' "$komari_dir/manifest")
-    printf '%s\n' "$komari_expected" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{64}$'
+    komari_dir=$(mktemp -d "${komari_dest}.download.XXXXXX") || exit 1
+    trap 'rm -rf -- "$komari_dir"' EXIT
+    trap 'exit 1' HUP INT TERM
+    curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 "$komari_url" -o "$komari_dir/binary" || exit 1
+    test -s "$komari_dir/binary" || exit 1
+    curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 "${komari_url%/*}/sha256sums.txt" -o "$komari_dir/manifest" || exit 1
+    komari_expected=$(awk -v n="$komari_name" '$2 == n || $2 == "*" n {print $1; count++} END {if(count!=1) exit 1}' "$komari_dir/manifest") || exit 1
+    printf '%s\n' "$komari_expected" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{64}$' || exit 1
     if command -v sha256sum >/dev/null 2>&1; then
         komari_actual=$(sha256sum "$komari_dir/binary" | awk '{print $1}')
     elif command -v shasum >/dev/null 2>&1; then
@@ -47,6 +48,6 @@ komari_fetch_verified() (
         echo 'SHA256 verification requires sha256sum, shasum or openssl' >&2; exit 1
     fi
     test "$(printf '%s' "$komari_expected" | tr A-F a-f)" = "$komari_actual" || { echo 'Release checksum mismatch; existing installation preserved' >&2; exit 1; }
-    chmod 755 "$komari_dir/binary"
+    chmod 755 "$komari_dir/binary" || exit 1
     mv -f "$komari_dir/binary" "$komari_dest"
 )

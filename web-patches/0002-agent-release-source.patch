@@ -1,13 +1,20 @@
 diff --git a/src/components/admin/NodeTable/NodeFunction.tsx b/src/components/admin/NodeTable/NodeFunction.tsx
-index 055129d..2035472 100644
+index 055129d..ce7698e 100644
 --- a/src/components/admin/NodeTable/NodeFunction.tsx
 +++ b/src/components/admin/NodeTable/NodeFunction.tsx
-@@ -1,3 +1,4 @@
-+import { agentInstallScript, agentInstallVersionArgs } from "@/config/agentRelease";
+@@ -1,3 +1,11 @@
++import {
++  agentInstallScript,
++  agentInstallVersionArgs,
++  agentReleaseVersion,
++  resolveAgentInstallRoute,
++  useAgentInstallRoutes,
++  type AgentInstallRoute,
++} from "@/config/agentRelease";
  import * as React from "react";
  import { z } from "zod";
  import { schema } from "@/components/admin/NodeTable/schema/node";
-@@ -6,7 +7,7 @@ import { Terminal, Trash2, Copy, Download, DollarSign } from "lucide-react";
+@@ -6,7 +14,7 @@ import { Terminal, Trash2, Copy, Download, DollarSign } from "lucide-react";
  import { t } from "i18next";
  import type { Row } from "@tanstack/react-table";
  import { EditDialog } from "./NodeEditDialog";
@@ -16,17 +23,54 @@ index 055129d..2035472 100644
  import {
    Button,
    Checkbox,
-@@ -83,17 +84,18 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+@@ -41,6 +49,9 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+   const [removing, setRemoving] = React.useState(false);
+   const [selectedPlatform, setSelectedPlatform] =
+     React.useState<Platform>("linux");
++  const [selectedInstallRoute, setSelectedInstallRoute] =
++    React.useState<AgentInstallRoute>("github-direct");
++  const installRoutes = useAgentInstallRoutes();
+   const [installOptions, setInstallOptions] = React.useState<InstallOptions>({
+     disableWebSsh: false,
+     disableAutoUpdate: false,
+@@ -65,7 +76,10 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+       args.push("--ignore-unsafe-cert");
+     }
+     const ghproxy = installOptions.ghproxy.trim();
+-    if (ghproxy) {
++    if (
++      ghproxy &&
++      !(selectedPlatform === "linux" && selectedInstallRoute === "mirror-direct")
++    ) {
+       const finalGhproxy = ghproxy.startsWith("http")
+         ? ghproxy
+         : `http://${ghproxy}`;
+@@ -83,17 +97,33 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
        args.push(serviceName);
      }
  
 +    args.push(...agentInstallVersionArgs());
++    const linuxRoute =
++      selectedPlatform === "linux"
++        ? resolveAgentInstallRoute(
++            selectedInstallRoute,
++            installRoutes,
++            host,
++            agentReleaseVersion
++          )
++        : undefined;
++    if (linuxRoute) {
++      if (!linuxRoute.available) return "所选安装路线配置不可用";
++      args[1] = linuxRoute.reportUrl;
++      args.push(...linuxRoute.args);
++    }
++
      let finalCommand = "";
      switch (selectedPlatform) {
        case "linux":
          finalCommand =
 -          `wget -qO- https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/install.sh | sudo bash -s -- ` +
-+          `wget -qO- ${quoteShellArg(agentInstallScript("install.sh"))} | sudo bash -s -- ` +
++          `wget -qO- ${quoteShellArg(linuxRoute!.scriptUrl)} | sudo bash -s -- ` +
            quoteShellArgs(args);
          break;
        case "windows":
@@ -37,7 +81,7 @@ index 055129d..2035472 100644
            ` -UseBasicParsing -OutFile 'install.ps1'; &` +
            ` '.\\install.ps1'`;
          args.forEach((arg) => {
-@@ -103,7 +105,7 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+@@ -103,7 +133,7 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
          break;
        case "macos":
          finalCommand =
@@ -46,16 +90,233 @@ index 055129d..2035472 100644
            quoteShellArgs(args);
          break;
      }
+@@ -147,6 +177,34 @@ export function ActionsCell({ row }: { row: Row<z.infer<typeof schema>> }) {
+               <SegmentedControl.Item value="macos">macOS</SegmentedControl.Item>
+             </SegmentedControl.Root>
+ 
++            {selectedPlatform === "linux" && (
++              <Flex direction="column" gap="1">
++                <label className="text-sm font-bold">下载与上报路线</label>
++                <SegmentedControl.Root
++                  value={selectedInstallRoute}
++                  onValueChange={(value) =>
++                    setSelectedInstallRoute(value as AgentInstallRoute)
++                  }
++                >
++                  <SegmentedControl.Item value="github-direct">
++                    GitHub · 直连
++                  </SegmentedControl.Item>
++                  {installRoutes?.download_base_url && agentReleaseVersion && (
++                    <SegmentedControl.Item value="mirror-direct">
++                      镜像 · 直连
++                    </SegmentedControl.Item>
++                  )}
++
++                  {installRoutes?.cft_report_url && (
++                    <SegmentedControl.Item value="github-cft">
++                      GitHub · CFT
++                    </SegmentedControl.Item>
++                  )}
++
++                </SegmentedControl.Root>
++              </Flex>
++            )}
++
+             <Flex direction="column" gap="2">
+               <label className="text-base font-bold">
+                 {t("admin.nodeTable.installOptions", "安装选项")}
+diff --git a/src/config/agentRelease.ts b/src/config/agentRelease.ts
+new file mode 100644
+index 0000000..769f883
+--- /dev/null
++++ b/src/config/agentRelease.ts
+@@ -0,0 +1,145 @@
++import { useEffect, useState } from "react";
++
++// Build-time release identity: one source for all installation dialogs.
++const repository = import.meta.env.VITE_KOMARI_AGENT_REPOSITORY || "0ozzzii/komari-mcp-bridge";
++export const agentReleaseVersion = import.meta.env.VITE_KOMARI_AGENT_VERSION || "";
++const installRef = import.meta.env.VITE_KOMARI_AGENT_INSTALL_REF || agentReleaseVersion || "main";
++const imageRepository = import.meta.env.VITE_KOMARI_IMAGE_REPOSITORY || "ghcr.io/0ozzzii/komari-mcp-bridge";
++
++export type AgentInstallRoute = "github-direct" | "mirror-direct" | "github-cft";
++
++export type AgentInstallRoutes = {
++  direct_report_url: string;
++  download_base_url?: string;
++  cft_report_url?: string;
++};
++
++export type ResolvedAgentInstallRoute = {
++  reportUrl: string;
++  scriptUrl: string;
++  args: string[];
++  available: boolean;
++};
++
++let installRoutesPromise: Promise<AgentInstallRoutes | null> | undefined;
++
++function configuredHttpsUrl(value: unknown): string | undefined {
++  if (typeof value !== "string") return undefined;
++  const candidate = value.trim();
++  if (!candidate || /[\r\n\t\s]/.test(candidate)) return undefined;
++
++  try {
++    const parsed = new URL(candidate);
++    if (
++      parsed.protocol !== "https:" ||
++      parsed.username ||
++      parsed.password ||
++      parsed.search ||
++      parsed.hash
++    ) {
++      return undefined;
++    }
++    return candidate.replace(/\/+$/, "");
++  } catch {
++    return undefined;
++  }
++}
++
++export function loadAgentInstallRoutes(): Promise<AgentInstallRoutes | null> {
++  if (!installRoutesPromise) {
++    installRoutesPromise = fetch(
++      `${window.location.origin}/komari-ai-v2-downloads/install-routes.json`,
++      { cache: "no-store" }
++    )
++      .then(async (response) => {
++        if (!response.ok) return null;
++        const raw: unknown = await response.json();
++        if (!raw || typeof raw !== "object") return null;
++        const values = raw as Record<string, unknown>;
++        const direct = configuredHttpsUrl(values.direct_report_url);
++        if (!direct) return null;
++        const download = configuredHttpsUrl(values.download_base_url);
++        const cft = configuredHttpsUrl(values.cft_report_url);
++        return {
++          direct_report_url: direct,
++          ...(download ? { download_base_url: download } : {}),
++          ...(cft ? { cft_report_url: cft } : {}),
++        };
++      })
++      .catch(() => null);
++  }
++  return installRoutesPromise;
++}
++
++export function useAgentInstallRoutes() {
++  const [routes, setRoutes] = useState<AgentInstallRoutes | null>(null);
++  useEffect(() => {
++    let active = true;
++    void loadAgentInstallRoutes().then((loaded) => {
++      if (active) setRoutes(loaded);
++    });
++    return () => {
++      active = false;
++    };
++  }, []);
++  return routes;
++}
++
++export function resolveAgentInstallRoute(
++  route: AgentInstallRoute,
++  routes: AgentInstallRoutes | null,
++  fallbackReportUrl: string,
++  requestedVersion = agentReleaseVersion
++): ResolvedAgentInstallRoute {
++  if (route === "mirror-direct") {
++    const base = routes?.download_base_url;
++    const selectedVersion = requestedVersion.trim();
++    if (!base || !selectedVersion) {
++      return { reportUrl: "", scriptUrl: "", args: [], available: false };
++    }
++    return {
++      reportUrl: routes?.direct_report_url || fallbackReportUrl,
++      scriptUrl: `${base}/${encodeURIComponent(selectedVersion)}/install.sh`,
++      args: ["--install-base-url", base],
++      available: true,
++    };
++  }
++
++  if (route === "github-cft") {
++    if (!routes?.cft_report_url) {
++      return { reportUrl: "", scriptUrl: "", args: [], available: false };
++    }
++    return {
++      reportUrl: routes.cft_report_url,
++      scriptUrl: agentInstallScript("install.sh"),
++      args: ["--install-no-mirror"],
++      available: true,
++    };
++  }
++
++  return {
++    reportUrl: routes?.direct_report_url || fallbackReportUrl,
++    scriptUrl: agentInstallScript("install.sh"),
++    args: ["--install-no-mirror"],
++    available: true,
++  };
++}
++
++export function agentInstallRouteLabel(route: AgentInstallRoute): string {
++  switch (route) {
++    case "mirror-direct":
++      return "镜像下载 · 直连上报";
++    case "github-cft":
++      return "GitHub 下载 · CFT 上报";
++    default:
++      return "GitHub 下载 · 直连上报";
++  }
++}
++
++export function agentInstallScript(file: "install.sh" | "install.ps1") {
++  return `https://raw.githubusercontent.com/${repository}/${installRef}/${file}`;
++}
++export function agentInstallVersionArgs(): string[] {
++  return agentReleaseVersion ? ["--install-version", agentReleaseVersion] : [];
++}
++export const agentDockerImage = `${imageRepository.toLowerCase()}-agent:${agentReleaseVersion || "latest"}`;
 diff --git a/src/pages/admin/index.tsx b/src/pages/admin/index.tsx
-index 6e8bd27..04bfec5 100644
+index 6e8bd27..5033c20 100644
 --- a/src/pages/admin/index.tsx
 +++ b/src/pages/admin/index.tsx
-@@ -1,3 +1,4 @@
-+import { agentInstallScript, agentInstallVersionArgs, agentDockerImage } from "@/config/agentRelease";
+@@ -1,3 +1,12 @@
++import {
++  agentInstallScript,
++  agentInstallVersionArgs,
++  agentDockerImage,
++  agentReleaseVersion,
++  resolveAgentInstallRoute,
++  useAgentInstallRoutes,
++  type AgentInstallRoute,
++} from "@/config/agentRelease";
  import {
    quotePowerShellArg,
    quoteShellArg,
-@@ -361,11 +362,11 @@ const AutoDiscoverySection = ({
+@@ -232,6 +241,9 @@ const AutoDiscoverySection = ({
+ 
+   const [selectedPlatform, setSelectedPlatform] =
+     React.useState<Platform>("linux");
++  const [selectedInstallRoute, setSelectedInstallRoute] =
++    React.useState<AgentInstallRoute>("github-direct");
++  const installRoutes = useAgentInstallRoutes();
+   const [showOptions, setShowOptions] = React.useState(false);
+   const [installOptions, setInstallOptions] =
+     React.useState<AutoDiscoveryInstallOptions>({
+@@ -307,7 +319,11 @@ const AutoDiscoverySection = ({
+       args.push("--gpu");
+     }
+     const ghproxy = installOptions.ghproxy.trim();
+-    if (enableGhproxy && ghproxy) {
++    if (
++      enableGhproxy &&
++      ghproxy &&
++      !(selectedPlatform === "linux" && selectedInstallRoute === "mirror-direct")
++    ) {
+       const finalUrl = (
+         ghproxy.startsWith("http") ? ghproxy : `http://${ghproxy}`
+       ).replace(/\/+$/, "");
+@@ -361,12 +377,35 @@ const AutoDiscoverySection = ({
        args.push(rotateVal);
      }
  
@@ -65,19 +326,49 @@ index 6e8bd27..04bfec5 100644
        scriptFile = "install.ps1";
      }
 -    let scriptUrl = `https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/${scriptFile}`;
+-    if (enableGhproxy && ghproxy) {
 +    let scriptUrl = agentInstallScript(scriptFile);
-     if (enableGhproxy && ghproxy) {
++    let linuxRoute:
++      | ReturnType<typeof resolveAgentInstallRoute>
++      | undefined;
++    if (selectedPlatform === "linux") {
++      const requestedVersion =
++        enableInstallVersion && installVersion
++          ? installVersion
++          : agentReleaseVersion;
++      linuxRoute = resolveAgentInstallRoute(
++        selectedInstallRoute,
++        installRoutes,
++        host,
++        requestedVersion
++      );
++      if (!linuxRoute.available) return "所选安装路线配置不可用";
++      args[1] = linuxRoute.reportUrl;
++      scriptUrl = linuxRoute.scriptUrl;
++      args.push(...linuxRoute.args);
++    }
++    if (
++      enableGhproxy &&
++      ghproxy &&
++      !(selectedPlatform === "linux" && selectedInstallRoute === "mirror-direct")
++    ) {
        scriptUrl = scriptUrl.slice(8); // 去掉 https://
        if (ghproxy.endsWith("/")) {
-@@ -378,6 +379,7 @@ const AutoDiscoverySection = ({
+         scriptUrl = `${ghproxy}${scriptUrl}`;
+@@ -378,6 +417,12 @@ const AutoDiscoverySection = ({
        }
      }
  
-+    if (selectedPlatform !== "docker") args.push(...agentInstallVersionArgs());
++    if (
++      selectedPlatform !== "docker" &&
++      !(enableInstallVersion && installVersion)
++    ) {
++      args.push(...agentInstallVersionArgs());
++    }
      let finalCommand = "";
      switch (selectedPlatform) {
        case "linux":
-@@ -424,7 +426,7 @@ const AutoDiscoverySection = ({
+@@ -424,7 +469,7 @@ const AutoDiscoverySection = ({
            `touch .komari-auto-discovery.json && ` +
            `docker run -d --name komari-agent --restart=always ` +
            `-v .komari-auto-discovery.json:/app/auto-discovery.json ` +
@@ -86,7 +377,65 @@ index 6e8bd27..04bfec5 100644
            quoteShellArgs(dockerArgs);
          break;
        }
-@@ -1659,12 +1661,12 @@ function GenerateCommandButton({
+@@ -508,6 +553,34 @@ const AutoDiscoverySection = ({
+         <SegmentedControl.Item value="docker">Docker</SegmentedControl.Item>
+       </SegmentedControl.Root>
+ 
++      {selectedPlatform === "linux" && (
++        <Flex direction="column" gap="1">
++          <label className="text-sm font-bold">下载与上报路线</label>
++          <SegmentedControl.Root
++            value={selectedInstallRoute}
++            onValueChange={(value) =>
++              setSelectedInstallRoute(value as AgentInstallRoute)
++            }
++          >
++            <SegmentedControl.Item value="github-direct">
++              GitHub · 直连
++            </SegmentedControl.Item>
++            {installRoutes?.download_base_url && agentReleaseVersion && (
++              <SegmentedControl.Item value="mirror-direct">
++                镜像 · 直连
++              </SegmentedControl.Item>
++            )}
++
++            {installRoutes?.cft_report_url && (
++              <SegmentedControl.Item value="github-cft">
++                GitHub · CFT
++              </SegmentedControl.Item>
++            )}
++
++          </SegmentedControl.Root>
++        </Flex>
++      )}
++
+       <Flex gap="2" align="center">
+         <Checkbox
+           checked={showOptions}
+@@ -1536,6 +1609,9 @@ function GenerateCommandButton({
+ }) {
+   const [selectedPlatform, setSelectedPlatform] =
+     React.useState<Platform>("linux");
++  const [selectedInstallRoute, setSelectedInstallRoute] =
++    React.useState<AgentInstallRoute>("github-direct");
++  const installRoutes = useAgentInstallRoutes();
+   const [installOptions, setInstallOptions] = React.useState<InstallOptions>({
+     disableWebSsh: false,
+     disableAutoUpdate: false,
+@@ -1610,7 +1686,11 @@ function GenerateCommandButton({
+       args.push("--gpu");
+     }
+     const ghproxy = installOptions.ghproxy.trim();
+-    if (enableGhproxy && ghproxy) {
++    if (
++      enableGhproxy &&
++      ghproxy &&
++      !(selectedPlatform === "linux" && selectedInstallRoute === "mirror-direct")
++    ) {
+       const finalUrl = (
+         ghproxy.startsWith("http")
+           ? ghproxy
+@@ -1659,13 +1739,32 @@ function GenerateCommandButton({
        args.push(`--month-rotate`);
        args.push(rotateVal);
      }
@@ -95,21 +444,48 @@ index 6e8bd27..04bfec5 100644
      if (selectedPlatform === "windows") {
        scriptFile = "install.ps1";
      }
-     let scriptUrl =
+-    let scriptUrl =
 -      `https://raw.githubusercontent.com/komari-monitor/komari-agent/refs/heads/main/${scriptFile}`;
-+      agentInstallScript(scriptFile);
-     if (enableGhproxy) {
+-    if (enableGhproxy) {
++    let scriptUrl = agentInstallScript(scriptFile);
++    if (selectedPlatform === "linux") {
++      const requestedVersion =
++        enableInstallVersion && installVersion
++          ? installVersion
++          : agentReleaseVersion;
++      const linuxRoute = resolveAgentInstallRoute(
++        selectedInstallRoute,
++        installRoutes,
++        host,
++        requestedVersion
++      );
++      if (!linuxRoute.available) return "所选安装路线配置不可用";
++      args[1] = linuxRoute.reportUrl;
++      scriptUrl = linuxRoute.scriptUrl;
++      args.push(...linuxRoute.args);
++    }
++    if (
++      enableGhproxy &&
++      ghproxy &&
++      !(selectedPlatform === "linux" && selectedInstallRoute === "mirror-direct")
++    ) {
        if (enableGhproxy && ghproxy) {
          scriptUrl = scriptUrl.slice(8); // 去掉 https://
-@@ -1678,6 +1680,7 @@ function GenerateCommandButton({
+         if (ghproxy.endsWith("/")) {
+@@ -1678,6 +1777,12 @@ function GenerateCommandButton({
          }
        }
      }
-+    if (selectedPlatform !== "docker") args.push(...agentInstallVersionArgs());
++    if (
++      selectedPlatform !== "docker" &&
++      !(enableInstallVersion && installVersion)
++    ) {
++      args.push(...agentInstallVersionArgs());
++    }
      let finalCommand = "";
      switch (selectedPlatform) {
        case "linux":
-@@ -1718,7 +1721,7 @@ function GenerateCommandButton({
+@@ -1718,7 +1823,7 @@ function GenerateCommandButton({
          }
          finalCommand =
            `docker run -d --name komari-agent --restart=always ` +
@@ -118,21 +494,38 @@ index 6e8bd27..04bfec5 100644
            quoteShellArgs(dockerArgs);
          break;
        }
-diff --git a/src/config/agentRelease.ts b/src/config/agentRelease.ts
-new file mode 100644
-index 0000000..3b76b70
---- /dev/null
-+++ b/src/config/agentRelease.ts
-@@ -0,0 +1,12 @@
-+// Build-time release identity: one source for all installation dialogs.
-+const repository = import.meta.env.VITE_KOMARI_AGENT_REPOSITORY || "0ozzzii/komari-mcp-bridge";
-+const installRef = import.meta.env.VITE_KOMARI_AGENT_INSTALL_REF || "main";
-+const version = import.meta.env.VITE_KOMARI_AGENT_VERSION || "";
-+const imageRepository = import.meta.env.VITE_KOMARI_IMAGE_REPOSITORY || "ghcr.io/0ozzzii/komari-mcp-bridge";
-+export function agentInstallScript(file: "install.sh" | "install.ps1") {
-+  return `https://raw.githubusercontent.com/${repository}/${installRef}/${file}`;
-+}
-+export function agentInstallVersionArgs(): string[] {
-+  return version ? ["--install-version", version] : [];
-+}
-+export const agentDockerImage = `${imageRepository.toLowerCase()}-agent:${version || "latest"}`;
+@@ -1759,6 +1864,34 @@ function GenerateCommandButton({
+             <SegmentedControl.Item value="docker">Docker</SegmentedControl.Item>
+           </SegmentedControl.Root>
+ 
++          {selectedPlatform === "linux" && (
++            <Flex direction="column" gap="1">
++              <label className="text-sm font-bold">下载与上报路线</label>
++              <SegmentedControl.Root
++                value={selectedInstallRoute}
++                onValueChange={(value) =>
++                  setSelectedInstallRoute(value as AgentInstallRoute)
++                }
++              >
++                <SegmentedControl.Item value="github-direct">
++                  GitHub · 直连
++                </SegmentedControl.Item>
++                {installRoutes?.download_base_url && agentReleaseVersion && (
++                  <SegmentedControl.Item value="mirror-direct">
++                    镜像 · 直连
++                  </SegmentedControl.Item>
++                )}
++
++                {installRoutes?.cft_report_url && (
++                  <SegmentedControl.Item value="github-cft">
++                    GitHub · CFT
++                  </SegmentedControl.Item>
++                )}
++
++              </SegmentedControl.Root>
++            </Flex>
++          )}
++
+           <Flex direction="column" gap="2">
+             <label className="text-base font-bold">
+               {t("admin.nodeTable.installOptions", "安装选项")}

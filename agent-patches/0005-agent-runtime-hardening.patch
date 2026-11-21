@@ -1,0 +1,913 @@
+diff --git a/cmd/root.go b/cmd/root.go
+index 19321f3da413fd87e9b7468fdc54d4b971031707..c7d45733d149b8d4e5055e79d40109400e9fcd5e 100644
+--- a/cmd/root.go
++++ b/cmd/root.go
+@@ -30,7 +30,8 @@ var flags = pkg_flags.GlobalConfig
+ var warningPanelHost, warningRunAsUser string
+ 
+ var RootCmd = &cobra.Command{
+-	Use:   "komari-agent",
++	Use:     "komari-agent",
++	Version: update.CurrentVersion + " (" + update.BuildVariant + ")",
+ 	Short: "komari agent",
+ 	Long:  `komari agent`,
+ 	RunE: func(cmd *cobra.Command, args []string) error {
+@@ -132,6 +133,7 @@ var RootCmd = &cobra.Command{
+ 		// 自动更新：后台立即检查一次并按周期复查，避免启动被 GitHub 访问阻塞
+ 		if !flags.DisableAutoUpdate {
+ 			go update.DoUpdateWorks(func() {
++				log.Println("Agent update installed; exiting with code 42 for restart")
+ 				shutdown.shutdown(42)
+ 			})
+ 		}
+@@ -139,6 +141,7 @@ var RootCmd = &cobra.Command{
+ 		for {
+ 			server.UpdateBasicInfo()
+ 			server.EstablishWebSocketConnection(func() {
++				log.Println("Panel-requested agent version switch installed; exiting with code 42 for restart")
+ 				shutdown.shutdown(42)
+ 			})
+ 		}
+@@ -166,6 +169,15 @@ func Execute() {
+ 	}
+ }
+ 
++func defaultReportInterval(arch string) float64 {
++	switch arch {
++	case "arm", "arm64":
++		return 5
++	default:
++		return 3
++	}
++}
++
+ func init() {
+ 	RootCmd.PersistentFlags().StringVar(&flags.ResourceScope, "resource-scope", "auto", "Metric boundary: auto detects containers; host/container explicitly override")
+ 	RootCmd.PersistentFlags().StringVarP(&flags.Token, "token", "t", "", "API token")
+@@ -176,7 +188,7 @@ func init() {
+ 	RootCmd.PersistentFlags().BoolVar(&flags.DisableAutoUpdate, "disable-auto-update", false, "Disable automatic updates")
+ 	RootCmd.PersistentFlags().BoolVar(&flags.DisableWebSsh, "disable-web-ssh", false, "Disable remote control(web ssh and rce)")
+ 	//RootCmd.PersistentFlags().BoolVar(&flags.MemoryModeAvailable, "memory-mode-available", false, "[deprecated]Report memory as available instead of used.")
+-	RootCmd.PersistentFlags().Float64VarP(&flags.Interval, "interval", "i", 3.0, "Interval in seconds")
++	RootCmd.PersistentFlags().Float64VarP(&flags.Interval, "interval", "i", defaultReportInterval(runtime.GOARCH), "Interval in seconds")
+ 	RootCmd.PersistentFlags().BoolVarP(&flags.IgnoreUnsafeCert, "ignore-unsafe-cert", "u", false, "Ignore unsafe certificate errors")
+ 	RootCmd.PersistentFlags().IntVarP(&flags.MaxRetries, "max-retries", "r", 3, "Maximum number of retries")
+ 	RootCmd.PersistentFlags().IntVarP(&flags.ReconnectInterval, "reconnect-interval", "c", 5, "Reconnect interval in seconds")
+diff --git a/cmd/runtime_test.go b/cmd/runtime_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..b4eb9d09e12ab47cf819c3a23a6beccbbb6cee2a
+--- /dev/null
++++ b/cmd/runtime_test.go
+@@ -0,0 +1,24 @@
++package cmd
++
++import (
++	"testing"
++)
++
++func TestReportIntervalDefaults(t *testing.T) {
++	for arch, want := range map[string]float64{"arm": 5, "arm64": 5, "amd64": 3, "386": 3} {
++		if got := defaultReportInterval(arch); got != want {
++			t.Errorf("%s: got %v, want %v", arch, got, want)
++		}
++	}
++	original := *flags
++	t.Cleanup(func() { *flags = original })
++	flag := RootCmd.PersistentFlags().Lookup("interval")
++	if err := flag.Value.Set("9"); err != nil || flags.Interval != 9 {
++		t.Fatalf("--interval override failed: %v, %v", flags.Interval, err)
++	}
++	t.Setenv("AGENT_INTERVAL", "11.5")
++	loadFromEnv()
++	if flags.Interval != 11.5 {
++		t.Fatalf("AGENT_INTERVAL override lost: %v", flags.Interval)
++	}
++}
+diff --git a/cmd/warn_linux.go b/cmd/warn_linux.go
+index ff43356a63904cdeaa0e3c9be1cdc286bc92c305..b5c5cc10d0bf3130a2569e26ff590f6366a00523 100644
+--- a/cmd/warn_linux.go
++++ b/cmd/warn_linux.go
+@@ -10,6 +10,7 @@ import (
+ 	"path/filepath"
+ 	"strings"
+ 	"sync"
++	"sync/atomic"
+ 	"syscall"
+ )
+ 
+@@ -31,27 +32,60 @@ type motdFile struct {
+ 	original string
+ }
+ 
++var (
++	motdFailed       atomic.Bool
++	motdLogOnce      sync.Once
++	legacyMOTDOnce   sync.Once
++	legacyMOTDFailed atomic.Bool
++)
++
++// MOTD storage is optional. A full or read-only /etc must not interrupt
++// monitoring, even if an unexpected panic occurs while changing the banner.
++func tryMOTD(failed *atomic.Bool, logOnce *sync.Once, change func() error) {
++	if failed.Load() {
++		return
++	}
++	logFailure := func(cause any) {
++		if failed.CompareAndSwap(false, true) {
++			logOnce.Do(func() { log.Printf("[warn] could not maintain MOTD warning: %v", cause) })
++		}
++	}
++	defer func() {
++		if cause := recover(); cause != nil {
++			logFailure(cause)
++		}
++	}()
++	if err := change(); err != nil {
++		logFailure(err)
++	}
++}
++
+ func startSecurityWarning(ctx context.Context) func() {
+ 	if ctx.Err() != nil {
+ 		return func() {}
+ 	}
+-	removeLegacyUpdateMOTDWarning(legacyUpdateMOTDPath)
++	legacyMOTDOnce.Do(func() {
++		tryMOTD(&legacyMOTDFailed, &motdLogOnce, func() error {
++			return removeLegacyUpdateMOTDWarning(legacyUpdateMOTDPath)
++		})
++	})
+ 	if flags.DisableWebSsh {
+-		if err := removeInstalledMOTDWarning(linuxMOTDPath); err != nil {
+-			log.Printf("[warn] could not remove MOTD warning: %v", err)
+-		}
++		tryMOTD(&motdFailed, &motdLogOnce, func() error { return removeInstalledMOTDWarning(linuxMOTDPath) })
+ 		return func() {}
+ 	}
+-	cleanup, err := installMOTDWarning(
+-		linuxMOTDPath,
+-		newSecurityWarning(flags.Endpoint, warningCurrentUser()),
+-	)
+-	if err != nil {
+-		log.Printf("[warn] could not maintain MOTD warning: %v", err)
++	var cleanup func() error
++	tryMOTD(&motdFailed, &motdLogOnce, func() error {
++		var err error
++		cleanup, err = installMOTDWarning(linuxMOTDPath, newSecurityWarning(flags.Endpoint, warningCurrentUser()))
++		return err
++	})
++	if cleanup == nil {
+ 		return func() {}
+ 	}
+ 	log.Printf("[warn] remote control is enabled; MOTD warning appended")
+-	return cleanup
++	return func() {
++		tryMOTD(&motdFailed, &motdLogOnce, cleanup)
++	}
+ }
+ 
+ func removeInstalledMOTDWarning(path string) error {
+@@ -72,25 +106,25 @@ func removeInstalledMOTDWarning(path string) error {
+ 	return writeMOTD(original, []byte(content))
+ }
+ 
+-func removeLegacyUpdateMOTDWarning(path string) {
++func removeLegacyUpdateMOTDWarning(path string) error {
+ 	data, err := os.ReadFile(path)
+ 	if os.IsNotExist(err) {
+-		return
++		return nil
+ 	}
+ 	if err != nil {
+-		log.Printf("[warn] could not inspect legacy update-motd hook: %v", err)
+-		return
++		return fmt.Errorf("inspect legacy update-motd hook: %w", err)
+ 	}
+ 	if !strings.HasPrefix(string(data), legacyUpdateMOTDMarker+"\n") {
+ 		log.Printf("[warn] legacy update-motd path is not managed by Komari; leaving it in place")
+-		return
++		return nil
+ 	}
+ 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+-		log.Printf("[warn] could not remove legacy update-motd hook: %v", err)
++		return fmt.Errorf("remove legacy update-motd hook: %w", err)
+ 	}
++	return nil
+ }
+ 
+-func installMOTDWarning(path string, warning securityWarning) (func(), error) {
++func installMOTDWarning(path string, warning securityWarning) (func() error, error) {
+ 	original, err := readMOTD(path)
+ 	if err != nil {
+ 		return nil, err
+@@ -118,11 +152,12 @@ func installMOTDWarning(path string, warning securityWarning) (func(), error) {
+ 	installedContent := updated
+ 
+ 	var once sync.Once
+-	return func() {
++	var cleanupErr error
++	return func() error {
+ 		once.Do(func() {
+ 			current, err := readMOTD(path)
+ 			if err != nil {
+-				log.Printf("[warn] could not restore MOTD: %v", err)
++				cleanupErr = fmt.Errorf("restore MOTD: %w", err)
+ 				return
+ 			}
+ 			if !current.exists {
+@@ -131,18 +166,18 @@ func installMOTDWarning(path string, warning securityWarning) (func(), error) {
+ 			if current.original == installedContent {
+ 				if !original.exists || managedOnly {
+ 					if err := os.Remove(current.target); err != nil && !os.IsNotExist(err) {
+-						log.Printf("[warn] could not remove temporary MOTD: %v", err)
++						cleanupErr = fmt.Errorf("remove temporary MOTD: %w", err)
+ 					}
+ 					return
+ 				}
+ 				if err := writeMOTD(current, []byte(base)); err != nil {
+-					log.Printf("[warn] could not restore MOTD: %v", err)
++					cleanupErr = fmt.Errorf("restore MOTD: %w", err)
+ 				}
+ 				return
+ 			}
+ 			content, found, err := removeMOTDWarning(current.original)
+ 			if err != nil {
+-				log.Printf("[warn] could not restore MOTD: %v", err)
++				cleanupErr = fmt.Errorf("restore MOTD: %w", err)
+ 				return
+ 			}
+ 			if !found {
+@@ -153,14 +188,15 @@ func installMOTDWarning(path string, warning securityWarning) (func(), error) {
+ 			}
+ 			if (!original.exists || managedOnly) && content == "" {
+ 				if err := os.Remove(current.target); err != nil && !os.IsNotExist(err) {
+-					log.Printf("[warn] could not remove temporary MOTD: %v", err)
++					cleanupErr = fmt.Errorf("remove temporary MOTD: %w", err)
+ 				}
+ 				return
+ 			}
+ 			if err := writeMOTD(current, []byte(content)); err != nil {
+-				log.Printf("[warn] could not restore MOTD: %v", err)
++				cleanupErr = fmt.Errorf("restore MOTD: %w", err)
+ 			}
+ 		})
++		return cleanupErr
+ 	}, nil
+ }
+ 
+diff --git a/cmd/warn_linux_test.go b/cmd/warn_linux_test.go
+index c6b4d3202f6fc556da342ebe45af653d3215e1d1..ebfaedf24dc3c280a09fcac7862cae221b4294bc 100644
+--- a/cmd/warn_linux_test.go
++++ b/cmd/warn_linux_test.go
+@@ -3,6 +3,11 @@
+ package cmd
+ 
+ import (
++	"bytes"
++	"log"
++	"sync"
++	"sync/atomic"
++	"syscall"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+@@ -79,8 +84,16 @@ func TestMOTDWarningIsIdempotent(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	t.Cleanup(firstCleanup)
+-	t.Cleanup(secondCleanup)
++	t.Cleanup(func() {
++		if err := firstCleanup(); err != nil {
++			t.Error(err)
++		}
++	})
++	t.Cleanup(func() {
++		if err := secondCleanup(); err != nil {
++			t.Error(err)
++		}
++	})
+ 
+ 	data, err := os.ReadFile(path)
+ 	if err != nil {
+@@ -211,7 +224,11 @@ func TestMOTDWarningIsRemovedWhenRemoteControlIsDisabled(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	t.Cleanup(cleanup)
++	t.Cleanup(func() {
++		if err := cleanup(); err != nil {
++			t.Error(err)
++		}
++	})
+ 
+ 	if err := removeInstalledMOTDWarning(path); err != nil {
+ 		t.Fatal(err)
+@@ -296,3 +313,33 @@ func TestLegacyUpdateMOTDHookCleanup(t *testing.T) {
+ 		t.Fatal("unmanaged legacy hook was changed")
+ 	}
+ }
++
++func TestMOTDFailureDoesNotInterruptStartup(t *testing.T) {
++	for _, failure := range []error{syscall.ENOSPC, syscall.EROFS, syscall.EACCES} {
++		t.Run(failure.Error(), func(t *testing.T) {
++			var output bytes.Buffer
++			writer := log.Writer()
++			log.SetOutput(&output)
++			t.Cleanup(func() { log.SetOutput(writer) })
++
++			var failed, legacyFailed atomic.Bool
++			var logOnce sync.Once
++			tryMOTD(&failed, &logOnce, func() error {
++				return &os.PathError{Op: "write", Path: "/etc/.komari-motd-fixture", Err: failure}
++			})
++			tryMOTD(&legacyFailed, &logOnce, func() error { return failure })
++			tryMOTD(&failed, &logOnce, func() error {
++				t.Fatal("failed MOTD write was retried")
++				return nil
++			})
++			if count := strings.Count(output.String(), "could not maintain MOTD warning"); count != 1 {
++				t.Fatalf("want a single diagnostic, got %q", output.String())
++			}
++		})
++	}
++	var failed atomic.Bool
++	tryMOTD(&failed, new(sync.Once), func() error { panic("test MOTD panic") })
++	if !failed.Load() {
++		t.Fatal("panic did not enter the MOTD failure path")
++	}
++}
+diff --git a/dnsresolver/resolver.go b/dnsresolver/resolver.go
+index 3ac38c2b2e9a46bfc670ee9242fe77fbcc451ee9..1c3c18f90baa0cff5929848f6e8c037cc6471a86 100644
+--- a/dnsresolver/resolver.go
++++ b/dnsresolver/resolver.go
+@@ -101,7 +101,7 @@ func GetCustomResolver() *net.Resolver {
+ 			// 优先使用自定义 DNS 服务器
+ 			dnsServer := getCurrentDNSServer()
+ 			if dnsServer != "" {
+-				if conn, err := d.DialContext(ctx, "udp", dnsServer); err == nil {
++				if conn, err := d.DialContext(ctx, network, dnsServer); err == nil {
+ 					return conn, nil
+ 				}
+ 			}
+@@ -111,7 +111,7 @@ func GetCustomResolver() *net.Resolver {
+ 				if server == dnsServer {
+ 					continue
+ 				}
+-				if conn, err := d.DialContext(ctx, "udp", server); err == nil {
++				if conn, err := d.DialContext(ctx, network, server); err == nil {
+ 					return conn, nil
+ 				}
+ 			}
+diff --git a/monitoring/monitoring.go b/monitoring/monitoring.go
+index 4ac1439d16d1dce6c02c7ac1e8e1831567d84a9e..fad27793a7899a98d14191bcababa1f0855d8519 100644
+--- a/monitoring/monitoring.go
++++ b/monitoring/monitoring.go
+@@ -74,11 +74,11 @@ type gpuDeviceReport struct {
+ 
+ func GenerateReport() []byte {
+ 	message := ""
+-	data := report{}
++	data := report{ResourceScope: unit.ResourceScopeInfo()}
+ 
+ 	cpu := unit.Cpu()
+ 	cpuUsage := cpu.CPUUsage
+-	if cpuUsage <= 0.001 && !unit.ContainerResourceScope() {
++	if cpuUsage <= 0.001 && (!unit.ContainerResourceScope() || data.ResourceScope["cpu"] == "host-fallback") {
+ 		cpuUsage = 0.001
+ 	}
+ 	data.CPU = cpuReport{Usage: cpuUsage}
+@@ -147,12 +147,20 @@ func GenerateReport() []byte {
+ 	}
+ 	// 基础模式下，GPU信息已在basicInfo中处理
+ 
+-	data.ResourceScope = unit.ResourceScopeInfo()
+-	if data.ResourceScope["mode"] == "container" {
+-		message += "resource_scope=container; load and disk quota unavailable; uptime=host boot; network=network namespace.\n"
+-		if warning := data.ResourceScope["warning"]; warning != "" {
+-			message += warning + "\n"
+-		}
++	if unit.LoadIsUnisolated() {
++		data.ResourceScope["load"] = "unknown"
++		message += "load is host-wide and not container-isolated; omitted.\n"
++	}
++	if disk.Status != "" {
++		data.ResourceScope["disk_used"] = disk.Status
++		data.ResourceScope["disk_total"] = "unknown"
++		message += "disk quota unknown; rootfs used=" + disk.Status + ".\n"
++	}
++	if unit.ContainerResourceScope() || unit.IsAndroid() {
++		data.ResourceScope["uptime"] = "agent process"
++	}
++	if warning := data.ResourceScope["warning"]; warning != "" {
++		message += warning + "\n"
+ 	}
+ 	data.Message = message
+ 
+diff --git a/monitoring/unit/disk.go b/monitoring/unit/disk.go
+index 536948143f8b1f54c434d0d42bed50bda8fdeaf2..61ffeb3da451a8181123871217fbaa5adecadd45 100644
+--- a/monitoring/unit/disk.go
++++ b/monitoring/unit/disk.go
+@@ -8,74 +8,86 @@ import (
+ )
+ 
+ type DiskInfo struct {
+-	Total uint64 `json:"total"`
+-	Used  uint64 `json:"used"`
++	Total  uint64 `json:"total"`
++	Used   uint64 `json:"used"`
++	Status string `json:"-"`
+ }
+ 
+-func Disk() DiskInfo {
+-	// statfs capacity is shared filesystem capacity, not a container storage quota.
+-	if ContainerResourceScope() && flags.IncludeMountpoints == "" {
+-		return DiskInfo{}
++func diskMountpoints(setting string, android bool) []string {
++	var mounts []string
++	seen := make(map[string]bool)
++	for _, path := range strings.Split(setting, ";") {
++		path = strings.TrimSpace(path)
++		if android && path == "/" {
++			path = "/data"
++		}
++		if path != "" && !seen[path] {
++			mounts = append(mounts, path)
++			seen[path] = true
++		}
+ 	}
++	return mounts
++}
++
++func selectedDiskMountpoints() []string {
++	mounts := diskMountpoints(flags.IncludeMountpoints, IsAndroid())
++	if len(mounts) == 0 && IsAndroid() && !ContainerResourceScope() {
++		return []string{"/data"}
++	}
++	return mounts
++}
++
++func Disk() DiskInfo {
+ 	diskinfo := DiskInfo{}
+-	// 获取所有分区，使用 true 避免物理磁盘被 gopsutil 错误排除
++	if mounts := selectedDiskMountpoints(); len(mounts) != 0 {
++		for _, mountpoint := range mounts {
++			if u, err := disk.Usage(mountpoint); err == nil {
++				diskinfo.Total += u.Total
++				diskinfo.Used += u.Used
++			}
++		}
++		return diskinfo
++	}
++	if ContainerResourceScope() {
++		return containerDiskUsage()
++	}
+ 	usage, err := disk.Partitions(true)
+ 	if err != nil {
+-		diskinfo.Total = 0
+-		diskinfo.Used = 0
+-	} else {
+-		// 如果指定了自定义挂载点，只统计指定的挂载点
+-		if flags.IncludeMountpoints != "" {
+-			includeMounts := strings.Split(flags.IncludeMountpoints, ";")
+-			for _, mountpoint := range includeMounts {
+-				mountpoint = strings.TrimSpace(mountpoint)
+-				if mountpoint != "" {
+-					u, err := disk.Usage(mountpoint)
+-					if err != nil {
+-						continue
+-					} else {
+-						diskinfo.Total += u.Total
+-						diskinfo.Used += u.Used
+-					}
+-				}
++		return diskinfo
++	}
++	deviceMap := make(map[string]*disk.UsageStat)
++
++	for _, part := range usage {
++		if isPhysicalDisk(part) {
++			u, err := disk.Usage(part.Mountpoint)
++			if err != nil {
++				continue
+ 			}
+-		} else {
+-			// 使用默认逻辑，排除临时文件系统和网络驱动器
+-			deviceMap := make(map[string]*disk.UsageStat)
+-
+-			for _, part := range usage {
+-				if isPhysicalDisk(part) {
+-					u, err := disk.Usage(part.Mountpoint)
+-					if err != nil {
+-						continue
+-					}
+-
+-					deviceID := part.Device
+-					// ZFS去重: 基于 pool 名称 (例如 pool/dataset -> pool)
+-					if strings.ToLower(part.Fstype) == "zfs" {
+-						if idx := strings.Index(deviceID, "/"); idx != -1 {
+-							deviceID = deviceID[:idx]
+-						}
+-					}
+-
+-					// 如果该设备已存在，且当前挂载点的 Total 更大，则替换（处理 quota 等情况）
+-					// 否则保留现有的（通常我们希望统计物理 pool 的总量）
+-					if existing, ok := deviceMap[deviceID]; ok {
+-						if u.Total > existing.Total {
+-							deviceMap[deviceID] = u
+-						}
+-					} else {
+-						deviceMap[deviceID] = u
+-					}
++
++			deviceID := part.Device
++			// ZFS去重: 基于 pool 名称 (例如 pool/dataset -> pool)
++			if strings.ToLower(part.Fstype) == "zfs" {
++				if idx := strings.Index(deviceID, "/"); idx != -1 {
++					deviceID = deviceID[:idx]
+ 				}
+ 			}
+ 
+-			for _, u := range deviceMap {
+-				diskinfo.Total += u.Total
+-				diskinfo.Used += u.Used
++			// 如果该设备已存在，且当前挂载点的 Total 更大，则替换（处理 quota 等情况）
++			// 否则保留现有的（通常我们希望统计物理 pool 的总量）
++			if existing, ok := deviceMap[deviceID]; ok {
++				if u.Total > existing.Total {
++					deviceMap[deviceID] = u
++				}
++			} else {
++				deviceMap[deviceID] = u
+ 			}
+ 		}
+ 	}
++
++	for _, u := range deviceMap {
++		diskinfo.Total += u.Total
++		diskinfo.Used += u.Used
++	}
+ 	return diskinfo
+ }
+ 
+@@ -169,47 +181,43 @@ func isPhysicalDisk(part disk.PartitionStat) bool {
+ }
+ 
+ func DiskList() ([]string, error) {
++	if mounts := selectedDiskMountpoints(); len(mounts) != 0 {
++		return mounts, nil
++	}
++	if ContainerResourceScope() {
++		return []string{"/ (container rootfs usage; quota unknown)"}, nil
++	}
+ 	diskList := []string{}
+-	if flags.IncludeMountpoints != "" {
+-		includeMounts := strings.Split(flags.IncludeMountpoints, ";")
+-		for _, mountpoint := range includeMounts {
+-			mountpoint = strings.TrimSpace(mountpoint)
+-			if mountpoint != "" {
+-				diskList = append(diskList, mountpoint)
+-			}
+-		}
+-	} else {
+-		usage, err := disk.Partitions(true)
+-		if err != nil {
+-			return nil, err
+-		}
++	usage, err := disk.Partitions(true)
++	if err != nil {
++		return nil, err
++	}
+ 
+-		// 同一物理设备只保留路径最短的根挂载点
+-		deviceMap := make(map[string]disk.PartitionStat)
+-		for _, part := range usage {
+-			if isPhysicalDisk(part) {
+-				deviceID := part.Device
+-				// ZFS去重: 基于 pool 名称
+-				if strings.ToLower(part.Fstype) == "zfs" {
+-					if idx := strings.Index(deviceID, "/"); idx != -1 {
+-						deviceID = deviceID[:idx]
+-					}
++	// 同一物理设备只保留路径最短的根挂载点
++	deviceMap := make(map[string]disk.PartitionStat)
++	for _, part := range usage {
++		if isPhysicalDisk(part) {
++			deviceID := part.Device
++			// ZFS去重: 基于 pool 名称
++			if strings.ToLower(part.Fstype) == "zfs" {
++				if idx := strings.Index(deviceID, "/"); idx != -1 {
++					deviceID = deviceID[:idx]
+ 				}
++			}
+ 
+-				if existing, ok := deviceMap[deviceID]; ok {
+-					// 优先保留路径更短的挂载点 (e.g., /volume1 优于 /volume1/@appdata/...)
+-					if len(part.Mountpoint) < len(existing.Mountpoint) {
+-						deviceMap[deviceID] = part
+-					}
+-				} else {
++			if existing, ok := deviceMap[deviceID]; ok {
++				// 优先保留路径更短的挂载点 (e.g., /volume1 优于 /volume1/@appdata/...)
++				if len(part.Mountpoint) < len(existing.Mountpoint) {
+ 					deviceMap[deviceID] = part
+ 				}
++			} else {
++				deviceMap[deviceID] = part
+ 			}
+ 		}
++	}
+ 
+-		for _, part := range deviceMap {
+-			diskList = append(diskList, fmt.Sprintf("%s (%s)", part.Mountpoint, part.Fstype))
+-		}
++	for _, part := range deviceMap {
++		diskList = append(diskList, fmt.Sprintf("%s (%s)", part.Mountpoint, part.Fstype))
+ 	}
+ 	return diskList, nil
+ }
+diff --git a/monitoring/unit/load.go b/monitoring/unit/load.go
+index 0a7323e595348ab91a1859ce7079037c815f5b17..495f62327df6f9b519b2b39ea64f14d4d49f4823 100644
+--- a/monitoring/unit/load.go
++++ b/monitoring/unit/load.go
+@@ -10,8 +10,12 @@ type LoadInfo struct {
+ 	Load15 float64 `json:"load_15"`
+ }
+ 
++func LoadIsUnisolated() bool {
++	return ContainerResourceScope() || IsAndroid()
++}
++
+ func Load() LoadInfo {
+-	if ContainerResourceScope() {
++	if LoadIsUnisolated() {
+ 		return LoadInfo{}
+ 	}
+ 
+diff --git a/monitoring/unit/uptime.go b/monitoring/unit/uptime.go
+index d2825325bbae3c0d3400ccb796e6698b6a0e17bd..53fc2b94968b7b3202d8efd1898441995567fd2c 100644
+--- a/monitoring/unit/uptime.go
++++ b/monitoring/unit/uptime.go
+@@ -1,11 +1,18 @@
+ package monitoring
+ 
+ import (
++	"time"
++
+ 	"github.com/shirou/gopsutil/v4/host"
+ )
+ 
+-func Uptime() (uint64, error) {
++var agentStarted = time.Now()
+ 
++func Uptime() (uint64, error) {
++	if ContainerResourceScope() || IsAndroid() {
++		// Proot may share the host PID namespace or /proc mount. The agent's
++		// monotonic clock remains local in either case.
++		return uint64(time.Since(agentStarted) / time.Second), nil
++	}
+ 	return host.Uptime()
+-
+ }
+diff --git a/server/task.go b/server/task.go
+index 0325f65e31288593e153077fcb4305a3872a2543..22c1f0d45887051a7834872c092554679b5bedd9 100644
+--- a/server/task.go
++++ b/server/task.go
+@@ -6,6 +6,7 @@ import (
+ 	"context"
+ 	"encoding/json"
+ 	"errors"
++	"fmt"
+ 	"io"
+ 	"log"
+ 	"net"
+@@ -14,6 +15,7 @@ import (
+ 	"os/exec"
+ 	"runtime"
+ 	"strings"
++	"syscall"
+ 	"time"
+ 
+ 	"github.com/komari-monitor/komari-agent/dnsresolver"
+@@ -154,17 +156,29 @@ func uploadTaskResult(taskID, result string, exitCode int, finishedAt time.Time)
+ }
+ 
+ // resolveIP 解析域名到 IP 地址，排除 DNS 查询时间
+-func resolveIP(target string) (string, error) {
+-	// 如果已经是 IP 地址，直接返回
+-	if ip := net.ParseIP(target); ip != nil {
++func resolveIP(ctx context.Context, target string) (string, error) {
++	if net.ParseIP(target) != nil {
+ 		return target, nil
+ 	}
+-	// 解析域名到 IP
+-	addrs, err := net.LookupHost(target)
+-	if err != nil || len(addrs) == 0 {
+-		return "", errors.New("failed to resolve target")
++	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
++	defer cancel()
++	resolver := dnsresolver.GetCustomResolver()
++	if resolver != net.DefaultResolver {
++		customCtx, cancelCustom := context.WithTimeout(ctx, 3*time.Second)
++		addrs, err := resolver.LookupHost(customCtx, target)
++		cancelCustom()
++		if err == nil && len(addrs) != 0 {
++			return addrs[0], nil
++		}
++	}
++	addrs, err := net.DefaultResolver.LookupHost(ctx, target)
++	if err != nil {
++		return "", fmt.Errorf("failed to resolve target: %w", err)
++	}
++	if len(addrs) == 0 {
++		return "", errors.New("failed to resolve target: empty DNS response")
+ 	}
+-	return addrs[0], nil // 返回第一个解析的 IP
++	return addrs[0], nil
+ }
+ 
+ func icmpPing(target string, timeout time.Duration) (int64, error) {
+@@ -177,18 +191,33 @@ func icmpPing(target string, timeout time.Duration) (int64, error) {
+ 	host = strings.Trim(host, "[]")
+ 
+ 	// 先解析 IP 地址
+-	ip, err := resolveIP(host)
++	ip, err := resolveIP(context.Background(), host)
+ 	if err != nil {
+ 		return -1, err
+ 	}
+ 
++	datagramSupported := runtime.GOOS == "linux" || runtime.GOOS == "android" || runtime.GOOS == "darwin"
++	return probeICMPWithFallback(!datagramSupported || os.Geteuid() == 0, datagramSupported, func(privileged bool) (int64, error) {
++		return runICMP(ip, timeout, privileged)
++	})
++}
++
++func probeICMPWithFallback(privileged, datagramSupported bool, run func(bool) (int64, error)) (int64, error) {
++	ms, err := run(privileged)
++	if privileged && datagramSupported && (errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES)) {
++		return run(false)
++	}
++	return ms, err
++}
++
++func runICMP(ip string, timeout time.Duration, privileged bool) (int64, error) {
+ 	pinger, err := ping.NewPinger(ip)
+ 	if err != nil {
+ 		return -1, err
+ 	}
+ 	pinger.Count = 1
+ 	pinger.Timeout = timeout
+-	pinger.SetPrivileged(true)
++	pinger.SetPrivileged(privileged)
+ 	err = pinger.Run()
+ 	if err != nil {
+ 		return -1, err
+@@ -211,7 +240,7 @@ func tcpPing(target string, timeout time.Duration) (int64, error) {
+ 	// If the host is an IPv6 literal, it might be wrapped in brackets.
+ 	host = strings.Trim(host, "[]")
+ 
+-	ip, err := resolveIP(host)
++	ip, err := resolveIP(context.Background(), host)
+ 	if err != nil {
+ 		return -1, err
+ 	}
+@@ -247,7 +276,7 @@ func httpPing(target string, timeout time.Duration) (int64, error) {
+ 			if err != nil {
+ 				return nil, err
+ 			}
+-			ip, err := resolveIP(host)
++			ip, err := resolveIP(ctx, host)
+ 			if err != nil {
+ 				return nil, err
+ 			}
+diff --git a/server/task_probe_test.go b/server/task_probe_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..2cea9b45a34af2e597791dbb3280de62d61f7471
+--- /dev/null
++++ b/server/task_probe_test.go
+@@ -0,0 +1,94 @@
++package server
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"net"
++	"os"
++	"reflect"
++	"syscall"
++	"testing"
++	"time"
++
++	"github.com/komari-monitor/komari-agent/dnsresolver"
++	"golang.org/x/net/dns/dnsmessage"
++)
++
++// The release workflow selects the TestTaskDeadline family for server tests.
++func TestTaskDeadlineAndProbeNetwork(t *testing.T) {
++	t.Run("custom DNS and deadline", func(t *testing.T) {
++		conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
++		if err != nil {
++			t.Fatal(err)
++		}
++		defer conn.Close()
++		done := make(chan struct{})
++		go func() {
++			defer close(done)
++			buf := make([]byte, 4096)
++			for {
++				n, from, err := conn.ReadFrom(buf)
++				if err != nil {
++					return
++				}
++				var request dnsmessage.Message
++				if err := request.Unpack(buf[:n]); err != nil || len(request.Questions) != 1 {
++					continue
++				}
++				q := request.Questions[0]
++				response := dnsmessage.Message{
++					Header:    dnsmessage.Header{ID: request.ID, Response: true, RecursionAvailable: true},
++					Questions: request.Questions,
++				}
++				if q.Type == dnsmessage.TypeA {
++					response.Answers = []dnsmessage.Resource{{
++						Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 60},
++						Body:   &dnsmessage.AResource{A: [4]byte{198, 51, 100, 42}},
++					}}
++				}
++				if packet, err := response.Pack(); err == nil {
++					_, _ = conn.WriteTo(packet, from)
++				}
++			}
++		}()
++		defer func() { _ = conn.Close(); <-done }()
++		old := dnsresolver.CustomDNSServer
++		t.Cleanup(func() { dnsresolver.CustomDNSServer = old })
++		dnsresolver.SetCustomDNSServer(conn.LocalAddr().String())
++		got, err := resolveIP(t.Context(), "komari-probe.test.")
++		if err != nil || got != "198.51.100.42" {
++			t.Fatalf("probe ignored custom DNS: got=%q err=%v", got, err)
++		}
++		ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
++		defer cancel()
++		if _, err := resolveIP(ctx, "komari-aborted.test."); err == nil {
++			t.Fatal("probe DNS lookup ignored deadline")
++		}
++	})
++	t.Run("ICMP privilege fallback", func(t *testing.T) {
++		var modes []bool
++		run := func(privileged bool) (int64, error) {
++			modes = append(modes, privileged)
++			if privileged {
++				return -1, fmt.Errorf("socket: %w", &os.SyscallError{Syscall: "socket", Err: syscall.EPERM})
++			}
++			return 17, nil
++		}
++		if ms, err := probeICMPWithFallback(true, true, run); err != nil || ms != 17 || !reflect.DeepEqual(modes, []bool{true, false}) {
++			t.Fatalf("raw-to-datagram fallback: ms=%d err=%v modes=%v", ms, err, modes)
++		}
++		modes = nil
++		if ms, err := probeICMPWithFallback(false, true, run); err != nil || ms != 17 || !reflect.DeepEqual(modes, []bool{false}) {
++			t.Fatalf("unprivileged datagram: ms=%d err=%v modes=%v", ms, err, modes)
++		}
++		want := errors.New("no ICMP response")
++		calls := 0
++		if _, err := probeICMPWithFallback(true, true, func(bool) (int64, error) {
++			calls++
++			return -1, want
++		}); !errors.Is(err, want) || calls != 1 {
++			t.Fatalf("ordinary failure retried: err=%v calls=%d", err, calls)
++		}
++	})
++}
+diff --git a/update/update.go b/update/update.go
+index 95a34de815a70af8d1b3225099ec4828d910089e..8217d25a589674ea67aa98eafef8a0e6da764392 100644
+--- a/update/update.go
++++ b/update/update.go
+@@ -21,6 +21,7 @@ import (
+ 
+ 	"github.com/blang/semver"
+ 	goupdate "github.com/inconshreveable/go-update"
++	pkg_flags "github.com/komari-monitor/komari-agent/cmd/flags"
+ 	"github.com/komari-monitor/komari-agent/dnsresolver"
+ )
+ 
+@@ -28,6 +29,7 @@ var ErrRestartRequired = errors.New("update installed; restart required")
+ 
+ var (
+ 	CurrentVersion string = "0.0.1"
++	BuildVariant          = "upstream"
+ 	Repo           string = "komari-monitor/komari-agent"
+ )
+ 
+@@ -521,6 +523,9 @@ func installRelease(candidate releaseCandidate) error {
+ // DoUpdateWorks 启动后立即检查一次升级，之后每 6 小时复查。
+ // 安装成功需要重启时回调 onRestartRequired 并停止循环。
+ func DoUpdateWorks(onRestartRequired func()) {
++	if pkg_flags.GlobalConfig.DisableAutoUpdate {
++		return
++	}
+ 	if runScheduledCheck(CheckAndUpdate, onRestartRequired) {
+ 		return
+ 	}

@@ -63,6 +63,9 @@ func Bind(method string, opts ...BindOption) gin.HandlerFunc {
 		o(cfg)
 	}
 	return func(c *gin.Context) {
+		if method == clientTokenMethod {
+			c.Header("Cache-Control", "no-store")
+		}
 		params, ok := assembleParams(c, cfg)
 		if !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Invalid or missing request body"})
